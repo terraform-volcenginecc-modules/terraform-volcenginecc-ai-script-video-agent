@@ -1,0 +1,5 @@
+.backup-status{font-size:10px;line-height:1.7;color:#77866d;margin:8px 0;overflow-wrap:anywhere}
+.backup-status>span{display:inline-flex;align-items:center;gap:5px}
+.backup-status.succeeded{color:#577c44}
+.backup-status.failed{color:#a4663e}
+.backup-status small{display:block;font-size:10px;font-weight:400}

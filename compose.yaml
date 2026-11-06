@@ -1,0 +1,64 @@
+name: animation-studio
+services:
+  postgres:
+    image: postgres:16.8-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: animation
+      POSTGRES_USER: animation
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets: [postgres_password]
+    volumes: ["./data/postgres:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U animation -d animation"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  api:
+    image: ${BACKEND_IMAGE:-animation-backend:local}
+    restart: unless-stopped
+    environment: &environment
+      RUNTIME_CONFIG: /config/runtime.json
+      MEDIA_ROOT: /work/media
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      POLL_SECONDS: ${POLL_SECONDS:-10}
+      MEDIA_ALLOWED_HOSTS: ${MEDIA_ALLOWED_HOSTS:-.volces.com,.volcengine.com,.bytecdn.cn,.ibytedtos.com}
+    secrets: [postgres_password, ark_api_key, owner_password, session_key]
+    volumes: &volumes ["./config:/config:ro", "./work:/work"]
+    depends_on:
+      postgres: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health',timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+  worker:
+    image: ${BACKEND_IMAGE:-animation-backend:local}
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker"]
+    environment: *environment
+    secrets: [postgres_password, ark_api_key]
+    volumes: *volumes
+    depends_on:
+      api: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import time,pathlib; p=pathlib.Path('/tmp/worker-heartbeat'); assert p.exists() and time.time()-p.stat().st_mtime<120"]
+      interval: 20s
+      timeout: 5s
+      retries: 6
+  web:
+    image: ${WEB_IMAGE:-animation-web:local}
+    restart: unless-stopped
+    ports: ["${BIND_ADDRESS:-127.0.0.1}:${WEB_PORT:-8080}:8080"]
+    depends_on:
+      api: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+secrets:
+  postgres_password: {file: ./secrets/postgres_password}
+  ark_api_key: {file: ./secrets/ark_api_key}
+  owner_password: {file: ./secrets/owner_password}
+  session_key: {file: ./secrets/session_key}

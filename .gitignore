@@ -1,0 +1,24 @@
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+terraform.tfvars
+*.auto.tfvars
+*.auto.tfvars.json
+crash.log
+crash.*.log
+.env
+secrets/
+.venv/
+__pycache__/
+.pytest_cache/
+frontend/node_modules/
+# Keep prebuilt frontend/dist in this release repository for direct deployment.
+data/
+work/
+config/runtime.json
+.local/
+releases/
+.idea/
+*.tsbuildinfo
+# Terraform creates .terraform.lock.hcl during init.
