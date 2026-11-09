@@ -148,6 +148,13 @@ def execute(job, provider_factory=Ark, downloader=download):
                 if script_deadline(row) <= now():
                     timeout_script(row)
                     return
+                # 保护旧版本遗留或异常恢复的活跃视频任务，不移除其分镜关联。
+                if db.scalar(select(Job.id).where(
+                    Job.project_id == row.project_id, Job.id != row.id,
+                    Job.shot_id.is_not(None),
+                    Job.status.in_(["queued", "running", "waiting", "uncertain"]),
+                ).limit(1)):
+                    raise ValueError("项目仍有未完成的镜头任务，请先处理后再生成剧本")
                 # Keep old assets for historical downloads; replace the active storyboard.
                 db.execute(update(Job).where(Job.project_id == row.project_id, Job.id != row.id,
                                              Job.shot_id.is_not(None)).values(shot_id=None))

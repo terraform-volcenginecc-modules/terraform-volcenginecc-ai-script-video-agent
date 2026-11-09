@@ -10,7 +10,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from pydantic import BaseModel, Field, ValidationError
-from sqlalchemy import func, select, text
+from sqlalchemy import func, or_, select, text
 
 from .config import COOKIE_SECURE, ark_key, models, secret, model_catalog
 from .db import Asset, Job, Project, Session, Shot, migrate, now, uid
@@ -510,13 +510,16 @@ def recover(job_id: str, body: RecoveryInput):
         if not existing:
             raise HTTPException(404, "任务不存在")
         project_locked(db, existing.project_id)
-        job = db.scalar(select(Job).where(Job.id == job_id).with_for_update())
+        # 等待项目锁期间状态可能变化，刷新本次请求先前读入的任务对象。
+        job = db.scalar(select(Job).where(Job.id == job_id).with_for_update()
+                        .execution_options(populate_existing=True))
         if job.status not in ("failed", "uncertain"):
             raise HTTPException(409, "仅失败或提交待核对任务可恢复")
-        # Ignore queued siblings, but never start two jobs for the same shot.
+        # 不同分镜的视频可以排队；项目级任务与当前分镜任务必须互斥。
         if db.scalar(select(Job.id).where(
             Job.project_id == job.project_id, Job.id != job.id, Job.status.in_(ACTIVE),
-            (Job.shot_id == job.shot_id) if job.shot_id else text("true")).limit(1)):
+            or_(Job.shot_id == job.shot_id, Job.shot_id.is_(None))
+            if job.shot_id else text("true")).limit(1)):
             raise HTTPException(409, "相关任务尚在执行")
         if job.kind == "video":
             shot = db.get(Shot, job.shot_id) if job.shot_id else None
