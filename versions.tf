@@ -6,10 +6,9 @@ terraform {
       source  = "volcengine/volcenginecc"
       version = "= 0.0.73"
     }
+    time = {
+      source  = "hashicorp/time"
+      version = "= 0.14.2"
+    }
   }
-}
-
-provider "volcenginecc" {
-  region = var.region
-  # Credentials are resolved from the provider environment / credential chain.
 }

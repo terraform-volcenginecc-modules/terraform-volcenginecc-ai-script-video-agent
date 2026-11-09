@@ -64,6 +64,10 @@ resource "volcenginecc_tos_bucket" "source" {
     grant_write        = ""
     grant_write_acp    = ""
   }
+  lifecycle {
+    # CCAPI reads ACL but omits ACLGrant; keep creation private and ignore its drift.
+    ignore_changes = [acl_grant]
+  }
 }
 
 resource "volcenginecc_tos_object" "source_parts" {

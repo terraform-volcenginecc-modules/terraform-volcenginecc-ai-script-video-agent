@@ -13,12 +13,12 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 EXCLUDED = {
     "node_modules", "__pycache__", ".pytest_cache", ".venv", ".git",
-    ".terraform", ".local", "secrets", "data", "work", "releases",
+    ".terraform", ".local", "secrets", "data", "work", "releases", "tests",
 }
 TOP_FILES = {
     "compose.yaml", "compose.dev.yaml", ".dockerignore", ".env.example",
     "README.md", "README.zh-CN.md", ".gitignore", ".gitattributes",
-    "versions.tf", "variables.tf", "main.tf",
+    "versions.tf", "providers.tf", "variables.tf", "main.tf",
     "bootstrap.tf", "outputs.tf", "delivery.tf",
 }
 
@@ -29,7 +29,7 @@ def package(version, output):
     if not (ROOT / "frontend/dist/index.html").is_file():
         raise ValueError("Native release requires prebuilt frontend/dist")
     paths = [ROOT / name for name in TOP_FILES if (ROOT / name).is_file()]
-    for directory in ("backend", "frontend", "scripts", "tests"):
+    for directory in ("backend", "frontend", "scripts"):
         for path in (ROOT / directory).rglob("*"):
             relative = path.relative_to(ROOT)
             if any(part in EXCLUDED or part.startswith(".env") for part in relative.parts):

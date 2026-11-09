@@ -98,6 +98,8 @@ resource "volcenginecc_tos_bucket" "assets" {
   # Object deletion is a separate, intentional data-cleanup operation.
   lifecycle {
     prevent_destroy = false
+    # CCAPI reads ACL but omits ACLGrant; keep creation private and ignore its drift.
+    ignore_changes = [acl_grant]
   }
 }
 
@@ -171,25 +173,19 @@ resource "volcenginecc_iam_policy" "delivery" {
 }
 
 # Creation: security group -> release barrier -> ECS.
-# Destruction reverses this order, so the provisioner runs AFTER ECS deletion.
-# terraform_data is built into Terraform 1.5.7; no additional cloud provider.
-resource "terraform_data" "eni_release_wait" {
+# Destruction reverses this order, so the delay runs AFTER ECS deletion.
+# The time provider handles the delay without invoking local commands.
+resource "time_sleep" "eni_release_wait" {
   depends_on = [volcenginecc_vpc_security_group.app]
 
-  input = {
-    wait_seconds = var.eni_release_wait_seconds
-  }
-  triggers_replace = [volcenginecc_vpc_security_group.app.id]
-
-  provisioner "local-exec" {
-    when        = destroy
-    interpreter = ["python3", "-c"]
-    command     = "import time; seconds = ${self.input.wait_seconds}; print(f'Waiting {seconds}s for ECS network interface release before deleting the security group', flush=True); time.sleep(seconds)"
+  destroy_duration = "${var.eni_release_wait_seconds}s"
+  triggers = {
+    security_group_id = volcenginecc_vpc_security_group.app.id
   }
 }
 
 resource "volcenginecc_ecs_instance" "app" {
-  depends_on = [terraform_data.eni_release_wait]
+  depends_on = [time_sleep.eni_release_wait]
 
   instance_name        = "${var.name_prefix}-app"
   hostname             = "${var.name_prefix}-app"

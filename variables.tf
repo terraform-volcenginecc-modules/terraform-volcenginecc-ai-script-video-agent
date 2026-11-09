@@ -78,9 +78,9 @@ variable "ecs_login_mode" {
 }
 
 variable "ecs_password" {
-  description = "Initial ECS password for password login. Supply a sensitive platform input or TF_VAR_ecs_password; Terraform state/plan contains this value."
+  description = "Initial ECS password for password login. Replace the public example default for real deployments; set null for key_pair login. Supply a sensitive platform input or TF_VAR_ecs_password; Terraform state/plan contains this value."
   type        = string
-  default     = null
+  default     = "ReplaceWithStrongPassword123"
   nullable    = true
   sensitive   = true
   validation {
@@ -152,7 +152,7 @@ variable "deletion_protection" {
 }
 
 variable "eni_release_wait_seconds" {
-  description = "Local wait after ECS deletion and before security group deletion; requires python3 on the Terraform runner. Apply before destroy to persist the barrier."
+  description = "Destroy-only time_sleep delay after ECS deletion and before security group deletion. Apply before destroy to persist the barrier."
   type        = number
   default     = 120
   nullable    = false

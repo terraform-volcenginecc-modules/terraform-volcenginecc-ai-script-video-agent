@@ -51,7 +51,7 @@ The default model IDs are `doubao-seed-2-1-pro-260628` and `doubao-seedance-2-0-
 
 ### 3.1 Resource Inventory
 
-The only cloud provider is `volcengine/volcenginecc = 0.0.73`; Terraform must be `>= 1.5.7, < 2.0`. The destruction delay uses Terraform's built-in `terraform_data` without an additional provider.
+Cloud resources use `volcengine/volcenginecc = 0.0.73`; Terraform must be `>= 1.5.7, < 2.0`. The destruction delay uses `hashicorp/time = 0.14.2` and `time_sleep`, without local command execution.
 
 | Terraform resource | Count | Purpose |
 | --- | ---: | --- |
@@ -67,7 +67,7 @@ The only cloud provider is `volcengine/volcenginecc = 0.0.73`; Terraform must be
 | `volcenginecc_tos_bucket.source` | 0 or 1 | Separate source bucket for automatic delivery |
 | `volcenginecc_tos_object.source_parts` | N | Automatic source chunks, each no larger than 16 KiB |
 | `volcenginecc_tos_object.source` | 0 or 1 | Verification manifest published after all chunks |
-| `terraform_data.eni_release_wait` | 1 | Local delay after ECS deletion and before security group deletion |
+| `time_sleep.eni_release_wait` | 1 | Destroy-only delay after ECS deletion and before security group deletion |
 
 N depends on source and frontend build size; use the execution plan and `source_delivery.chunk_count` for the actual count. The EIP, system disk, primary NIC, and role association are embedded ECS settings, not separate resources. The ECS installer creates PostgreSQL, database accounts, the Web login password, and application services.
 
@@ -87,7 +87,6 @@ Both source and media buckets have private bucket ACLs. Only automatically deliv
 .
 ├── backend/
 │   ├── app/                     # API, Worker, model adapters, media processing and backup
-│   ├── tests/                   # Isolated database and FFmpeg checks
 │   └── requirements.txt
 ├── frontend/
 │   ├── src/                     # React/TypeScript studio
@@ -99,18 +98,14 @@ Both source and media buckets have private bucket ACLs. Only automatically deliv
 │   ├── ecs-bootstrap.sh         # ECS installation entry point
 │   ├── ecs-deploy.py            # Download, combine and verify source
 │   ├── ecs-native.py            # Install database and systemd services
-│   ├── ecs-public-web.py        # Configure Nginx and test HTTPS
-│   ├── setup-local.sh
-│   ├── init-native-db.py
-│   ├── run-native.sh
-│   └── verify-local.sh
-├── tests/                       # Terraform mocks and deployment verification
+│   └── ecs-public-web.py        # Configure Nginx and test HTTPS
 ├── main.tf                      # Networking, ECS, media bucket and IAM
 ├── delivery.tf                  # Source encoding, chunks and manifest
 ├── bootstrap.tf                 # Runtime configuration and cloud-init
 ├── variables.tf
 ├── outputs.tf
 ├── versions.tf
+├── providers.tf                 # Provider configuration
 ├── terraform.tfvars             # Local deployment parameters
 ├── compose.yaml                 # Optional local container setup
 ├── compose.dev.yaml
@@ -138,13 +133,15 @@ resource "volcenginecc_tos_object" "source" {
 
 [bootstrap.tf](bootstrap.tf) writes the manifest location, manifest SHA256, and source SHA256 into the deployment configuration. ECS downloads chunks in order and verifies the manifest, chunk lengths, combined payload, and decompressed source before installing the application. Encoded content is limited to 10 MiB and decompressed JSON to 100 MiB. Legacy single-object delivery and private `.tar.gz` releases remain supported.
 
-Creation dependencies are `security group → terraform_data.eni_release_wait → ECS`; destruction runs in reverse, with a default 120-second delay to allow asynchronous NIC detachment. The Terraform runner needs `python3` for this delay. The wait resource must have been applied to state before a later destroy can execute it.
+Creation dependencies are `security group → time_sleep.eni_release_wait → ECS`; destruction runs in reverse, with a default 120-second delay to allow asynchronous NIC detachment. No creation delay is configured, and destruction does not invoke Python or shell commands. The wait resource must have been applied to state before a later destroy can execute it.
+
+For an existing stack with the previous `terraform_data` wait resource, review a fresh plan before applying: the old wait resource is removed and the new `time_sleep` resource is added. Do not use a `moved` block to change between these resource types. Confirm that ECS is not replaced and apply the new wait resource before destroying the stack. Removing the old resource block also removes its destroy provisioner, so it cannot provide the previous delay during the transition.
 
 Chunks use Terraform's default parallelism without an additional global concurrency limit. Chunking addresses large `Content` payloads, but CCAPI read-back `Resource Not Found` errors have still been observed during concurrent creation or refresh. Chunking does not resolve that cloud-side issue. Section 4 covers deployment and verification.
 
 ## 4. Usage
 
-Deploy a complete template through InfraManager, or use local Terraform to install the same native ECS services. For InfraManager, confirm support for the selected provider version and local Python execution during destruction. InfraManager acceptance testing has not yet been completed. Local application development is covered in section 4.3.
+Deploy a complete template through InfraManager, or use local Terraform to install the same native ECS services. For InfraManager, confirm support for both selected provider versions. InfraManager acceptance testing has not yet been completed. This release includes deployment scripts; development helpers and automated tests remain in the development repository.
 
 ### 4.1 Cloud Deployment
 
@@ -236,7 +233,7 @@ Run the following Terraform commands from this project's root directory in WSL/L
 
 #### 4.2.1 Prepare the Environment
 
-Install Terraform `>= 1.5.7, < 2.0` and Python 3, and prepare a deployment identity with access to Volcengine APIs. This release includes `frontend/dist/` and does not require a frontend build before deployment. Node.js/npm is needed when changing frontend source or creating a new release. The provider version is pinned in `versions.tf`; `terraform init` generates its dependency lock file.
+Install Terraform `>= 1.5.7, < 2.0` and prepare a deployment identity with access to Volcengine APIs. This release includes `frontend/dist/` and does not require a frontend build before deployment. Python 3 and Node.js/npm are needed for release packaging. Provider versions are pinned in `versions.tf`, with configuration in `providers.tf`; `terraform init` generates the dependency lock file.
 
 Provide `VOLCENGINE_ACCESS_KEY` and `VOLCENGINE_SECRET_KEY` through environment variables or the provider credential chain; temporary credentials also require `VOLCENGINE_SESSION_TOKEN`. In password mode, inject the system password through `TF_VAR_ecs_password`. Keep real credentials out of source code, command history, and version control.
 
@@ -252,7 +249,7 @@ Review the local `terraform.tfvars` and update values for the target account. Wh
 | `instance_type` | Required | Available CPU ECS type; start with 4 vCPU / 8 GiB |
 | `ecs_login_mode` | `key_pair` | `key_pair` or `password` |
 | `ssh_key_pair_name` | `null` | Existing key-pair name required in key-pair mode |
-| `ecs_password` | `null`, sensitive | Required in password mode; 8–30 characters and compliant with ECS rules |
+| `ecs_password` | `ReplaceWithStrongPassword123`, sensitive | Public example default; replace for real password login, set explicitly to `null` for key-pair login |
 | `ssh_allowed_cidrs` | Required | Nonempty set of administrator IPv4 CIDRs |
 | `web_allowed_cidrs` | `[]` | Allowed sources for 80/443; empty disables public Web ingress |
 | `system_disk_size_gib` / `system_disk_type` | `100` / `ESSD_FlexPL` | System disk size and type; at least 40 GiB |
@@ -358,6 +355,41 @@ terraform plan -detailed-exitcode
 
 Exit code `0` means no changes, `2` means changes are planned, and `1` means an error. If source objects already exist or read-back returns `Resource Not Found`, inspect cloud objects and state before attempting creation again. Historical checks passed with parallelism set to one, while default parallelism still showed known read errors, as described in section 3.3.
 
+**Converging the default outbound security group rule.** If repeated plans propose deleting the default rule with priority `100` and description “放通全部流量”, include its actual returned attributes in `volcenginecc_vpc_security_group.app.egress_permissions` in `main.tf`, retaining the existing priority `1` rule. The following complete example includes the current rule and the observed default rule. Before applying it, check every field against the actual read-back result, including empty-string fields:
+
+```hcl
+egress_permissions = [
+  {
+    cidr_ip         = "0.0.0.0/0"
+    description     = "Allow DNS package downloads and model APIs"
+    direction       = "egress"
+    policy          = "accept"
+    port_start      = -1
+    port_end        = -1
+    priority        = 1
+    protocol        = "all"
+    prefix_list_id  = ""
+    source_group_id = ""
+  },
+  {
+    cidr_ip         = "0.0.0.0/0"
+    description     = "放通全部流量"
+    direction       = "egress"
+    policy          = "accept"
+    port_start      = -1
+    port_end        = -1
+    priority        = 100
+    protocol        = "all"
+    prefix_list_id  = ""
+    source_group_id = ""
+  },
+]
+```
+
+This example matches existing unrestricted outbound rules and is not suitable for environments requiring outbound restrictions. Avoid hiding the whole collection with `ignore_changes = [egress_permissions]`: it prevents both template changes and cloud rule drift from being used to update existing security groups. If that ignore setting was previously added, remove it when adopting this configuration.
+
+After saving, run `terraform plan -detailed-exitcode`. If the attributes match the refreshed state, this difference should disappear without first applying anything; other real configuration changes still require reviewing the plan. If the default rule is still marked for modification, investigate field normalization and Provider/CCAPI read-back behavior rather than repeatedly applying. The current template does not automatically include this rule; this section provides a manual configuration option.
+
 #### 4.2.5 Destroy Resources
 
 Before destruction, back up PostgreSQL, media, secrets, and runtime configuration. Confirm that the directory, workspace, parameters, and credentials belong to the target environment, then review the deletion plan:
@@ -377,42 +409,7 @@ The media bucket in the current `main.tf` has `prevent_destroy = false`, and the
 - The delay uses the value already applied to state. Review and apply changes before they can affect a later destroy. If ECS deletion protection is enabled, disable it through a reviewed plan first.
 - After completion, check state, remaining console resources, and charges. Empty state does not mean retained disks or external resources have been removed.
 
-### 4.3 Local Application Development
-
-**Native startup on WSL / Ubuntu** requires Python 3.12, Node.js/npm, PostgreSQL 16, FFmpeg, and OpenSSL. This project has been verified with Node.js 24.
-
-```bash
-sudo apt-get update
-sudo apt-get install -y postgresql-16 ffmpeg python3-venv openssl
-sudo pg_ctlcluster 16 main start
-bash scripts/setup-local.sh
-python3 -m venv .venv
-.venv/bin/pip install --index-url https://mirrors.ivolces.com/pypi/simple/ -r backend/requirements.txt
-sudo .venv/bin/python scripts/init-native-db.py
-bash scripts/run-native.sh
-```
-
-Open `http://localhost:5173` and sign in with `secrets/owner_password`. Enter the Ark key in `secrets/ark_api_key` using an editor and keep permissions at `0600`. The startup script runs in the foreground; Ctrl+C stops Web/API/Worker. The API listens on `127.0.0.1:8000`. Vite listens on all interfaces, so use it only in a controlled development environment.
-
-The initialization script creates the application role, the `animation_local` database, and the isolated `animation_test` database. To use an existing PostgreSQL installation, create databases yourself and supply the connection string through the protected `DATABASE_URL` environment variable.
-
-**Optional Docker development setup**:
-
-```bash
-bash scripts/setup-local.sh
-docker compose -f compose.yaml -f compose.dev.yaml up -d --build --wait --wait-timeout 180
-docker compose ps
-```
-
-Open `http://localhost:8080`, which binds only to loopback by default. `compose.yaml` defines the delivery configuration; `compose.dev.yaml` adds source builds. Editors may replace secret files when saving. After a key update, remount them with:
-
-```bash
-docker compose up -d --force-recreate api worker web --wait --wait-timeout 180
-```
-
-`docker compose stop` stops services and retains data. Docker stores its database in `data/postgres`. Both local setups use `work/media` for media, `secrets/` for credentials, and `config/runtime.json` for model configuration. Automatic TOS upload is disabled locally by default.
-
-### 4.4 Creation, Reference Assets, and Task Recovery
+### 4.3 Creation, Reference Assets, and Task Recovery
 
 - **Projects and models**: search, archive, and restore projects. Archiving retains assets but disables editing and generation. Project settings support a model catalog or a custom model ID/endpoint. Administrators maintain options in `model_catalog` in runtime configuration; a catalog entry does not establish account permissions.
 - **Generation settings**: supported aspect ratios are 16:9, 9:16, 1:1, 4:3, 3:4, and 21:9. Options include 480p/720p/1080p, sound, watermarks, and cloud timeouts of 1–72 hours, defaulting to 48 hours. Fast/mini models do not support 1080p; 1.0 pro requires sound to be disabled. Unknown endpoints need capability mappings.
@@ -425,7 +422,7 @@ docker compose up -d --force-recreate api worker web --wait --wait-timeout 180
 - **Recovery rules**: tasks with an Ark Task ID resume polling and archiving without resubmission. Resubmitting a definitively terminated task requires confirmation of possible charges. If submission was interrupted without a recorded ID, check Ark and add the existing ID before creating another task. Failed script requests retry automatically at most twice, with a total 10-minute limit and cancellation support.
 - **Film export**: FFmpeg normalizes aspect ratio, 24 fps, H.264/AAC, and 48 kHz audio, then joins clips with hard cuts at confirmed out points. When sound is enabled, silent clips receive an audio track. Generated duration and speech may differ from the script; review the final result manually.
 
-### 4.5 Asset Backup and Project Verification
+### 4.4 Asset Backup and Operational Checks
 
 Cloud deployment enables `storage.auto_upload=true` by default. The destination comes from `bucket_name`, not a hard-coded bucket. Backups cover new and historical archived shot videos, final films, model ending frames, extracted reference frames, uploaded images, and frame-selection preview videos.
 
@@ -443,22 +440,17 @@ Local files remain available for playback, frame selection, and assembly. Automa
 | Secrets | `/opt/ai-animation/secrets/` |
 | Installation status | `/opt/ai-animation/deployment-status.json` |
 
-Project verification commands:
+Operational checks on ECS:
 
 ```bash
-python3 tests/verify-source-deployment.py
-python3 tests/verify-native-deployment.py
-python3 tests/verify-destroy-order.py
-# mock_provider requires Terraform >= 1.7 and a prebuilt frontend.
-terraform test -filter=tests/source-deployment.tftest.hcl
-# Requires initialized animation_test, a Python environment, npm and the Docker Compose command.
-bash scripts/verify-local.sh
-.venv/bin/python scripts/smoke-http.py --url http://localhost:5173
+sudo systemctl is-active ai-animation-api.service ai-animation-worker.service nginx.service
+curl --fail --silent --show-error --max-time 15 http://127.0.0.1:8080/api/health
+sudo journalctl -u ai-animation-worker.service -n 100 --no-pager
 ```
 
-`verify-local.sh` uses an isolated test database and clears its application test tables; never point it at a production database. It includes a frontend build and Compose configuration checks. Offline verification uses injected test models without calling billable Ark APIs. PostgreSQL advisory locks serialize database migrations. The current schema version is `6`, including task error details and the independent media backup queue.
+Confirm active services and `{"status":"ok"}` from the health endpoint, then inspect backup status in the interface and Worker logs. PostgreSQL advisory locks serialize database migrations. The current schema version is `6`, including task error details and the independent media backup queue.
 
-The commands above provide reproducible offline deployment checks. Verify model permissions, application health, shot continuity, and data recovery separately in the target environment.
+Verify model permissions, application health, shot continuity, and data recovery in the target environment using section 4.1.4. Automated test suites are maintained in the development repository and are not part of this release.
 
 ## 5. Scope and Limitations
 

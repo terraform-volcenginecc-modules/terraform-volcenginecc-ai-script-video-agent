@@ -51,7 +51,7 @@ flowchart LR
 
 ### 3.1 资源清单
 
-云 Provider 唯一使用 `volcengine/volcenginecc = 0.0.73`；Terraform 版本要求 `>= 1.5.7, < 2.0`。销毁等待使用 Terraform 内置的 `terraform_data`，不引入额外 Provider。
+云资源使用 `volcengine/volcenginecc = 0.0.73`；Terraform 版本要求 `>= 1.5.7, < 2.0`。销毁等待使用 `hashicorp/time = 0.14.2` 的 `time_sleep`，不执行本地命令。
 
 | Terraform 资源 | 数量 | 用途 |
 | --- | ---: | --- |
@@ -67,7 +67,7 @@ flowchart LR
 | `volcenginecc_tos_bucket.source` | 0 或 1 | 自动交付时创建的独立源码桶 |
 | `volcenginecc_tos_object.source_parts` | N | 自动交付源码分片，每片最多 16 KiB |
 | `volcenginecc_tos_object.source` | 0 或 1 | 分片全部完成后发布的校验清单 |
-| `terraform_data.eni_release_wait` | 1 | ECS 删除后、删除安全组前的本地等待 |
+| `time_sleep.eni_release_wait` | 1 | ECS 删除后、删除安全组前的销毁阶段等待 |
 
 N 随源码与前端产物大小变化，以执行计划及 `source_delivery.chunk_count` 为准。EIP、系统盘、主网卡和角色关联为 ECS 内嵌配置，不另计独立资源；PostgreSQL、数据库账号、Web 登录密码和应用服务由 ECS 安装器创建。
 
@@ -87,7 +87,6 @@ N 随源码与前端产物大小变化，以执行计划及 `source_delivery.chu
 .
 ├── backend/
 │   ├── app/                     # API、Worker、模型适配、媒体处理与备份
-│   ├── tests/                   # 隔离数据库与 FFmpeg 检查
 │   └── requirements.txt
 ├── frontend/
 │   ├── src/                     # React/TypeScript 创作界面
@@ -99,18 +98,14 @@ N 随源码与前端产物大小变化，以执行计划及 `source_delivery.chu
 │   ├── ecs-bootstrap.sh         # ECS 安装入口
 │   ├── ecs-deploy.py            # 下载、合并和校验源码
 │   ├── ecs-native.py            # 数据库与 systemd 服务安装
-│   ├── ecs-public-web.py        # Nginx 与测试 HTTPS 配置
-│   ├── setup-local.sh
-│   ├── init-native-db.py
-│   ├── run-native.sh
-│   └── verify-local.sh
-├── tests/                       # Terraform mock 与部署验证
+│   └── ecs-public-web.py        # Nginx 与测试 HTTPS 配置
 ├── main.tf                      # 网络、ECS、媒资桶与 IAM
 ├── delivery.tf                  # 源码编码、分片和清单
 ├── bootstrap.tf                 # 运行配置与 cloud-init
 ├── variables.tf
 ├── outputs.tf
 ├── versions.tf
+├── providers.tf                 # Provider 配置
 ├── terraform.tfvars             # 本地部署参数
 ├── compose.yaml                 # 可选本地容器运行
 ├── compose.dev.yaml
@@ -138,13 +133,15 @@ resource "volcenginecc_tos_object" "source" {
 
 [bootstrap.tf](bootstrap.tf) 将清单位置、清单 SHA256 和源码 SHA256 写入部署配置。ECS 按编号下载分片，校验清单、分片长度、合并内容和解压后源码，通过后才安装应用。编码内容上限 10 MiB，解压后的 JSON 上限 100 MiB；仍兼容旧单对象和私有 `.tar.gz` 交付。
 
-创建依赖为 `安全组 → terraform_data.eni_release_wait → ECS`，销毁顺序反向执行，默认等待 120 秒缓解网卡异步解绑问题。执行等待需要 Terraform 运行环境提供 `python3`；只有等待对象已通过 Apply 写入 State，后续 Destroy 才会执行它。
+创建依赖为 `安全组 → time_sleep.eni_release_wait → ECS`，销毁顺序反向执行，默认等待 120 秒缓解网卡异步解绑问题。创建阶段不设置等待，销毁阶段不调用 Python 或 Shell 命令；只有等待对象已通过 Apply 写入 State，后续 Destroy 才会执行它。
+
+已有资源栈若使用旧 `terraform_data` 等待对象，应先生成并审查新计划：旧等待对象删除，新 `time_sleep` 对象创建。不要用 `moved` 块跨这两种资源类型迁移；确认 ECS 没有替换，并在销毁前先应用新的等待对象。移除旧资源块也会移除其销毁 provisioner，迁移期间不能继续依赖旧等待逻辑。
 
 分片使用 Terraform 默认并发，不额外全局串行化。分片解决大 `Content` 交付问题，但并发创建或刷新时仍观察到过 CCAPI 回读 `Resource Not Found`；不能把分片方案视为已修复该云端问题。部署和验证步骤见第 4 节。
 
 ## 4. 使用说明
 
-可以将完整模板交给 InfraManager 执行，或在本地通过 Terraform 部署同一套 ECS 原生服务。云上方式仍需确认平台支持所选 Provider 版本和销毁阶段的 Python 本地执行；当前尚未完成 InfraManager 实测验收。本机应用开发方式见第 4.3 节。
+可以将完整模板交给 InfraManager 执行，或在本地通过 Terraform 部署同一套 ECS 原生服务。云上方式需确认平台支持所选两个 Provider 的版本；当前尚未完成 InfraManager 实测验收。本发布版本保留部署脚本，本地开发辅助脚本和自动化测试保留在开发仓库。
 
 ### 4.1 云上部署
 
@@ -236,7 +233,7 @@ sudo cat /opt/ai-animation/secrets/owner_password
 
 #### 4.2.1 环境准备
 
-准备 Terraform `>= 1.5.7, < 2.0`、Python 3，以及可访问火山引擎 API 的部署身份。本发布目录已包含 `frontend/dist/`，部署前无需重新构建；修改前端源码或制作新版本时需要 Node.js/npm。Provider 版本由 `versions.tf` 固定，`terraform init` 会生成依赖锁文件。
+准备 Terraform `>= 1.5.7, < 2.0`，以及可访问火山引擎 API 的部署身份。本发布目录已包含 `frontend/dist/`，部署前无需重新构建；发布打包需要 Python 3、Node.js/npm。Provider 版本由 `versions.tf` 固定，配置位于 `providers.tf`，`terraform init` 会生成依赖锁文件。
 
 通过环境变量或 Provider 凭据链提供 `VOLCENGINE_ACCESS_KEY`、`VOLCENGINE_SECRET_KEY`；临时凭据还需 `VOLCENGINE_SESSION_TOKEN`。密码模式可通过 `TF_VAR_ecs_password` 注入系统密码。不要将真实凭据写入代码、命令历史或版本控制。
 
@@ -252,7 +249,7 @@ sudo cat /opt/ai-animation/secrets/owner_password
 | `instance_type` | 必填 | 可用 CPU ECS 规格，建议 4 vCPU / 8 GiB 起 |
 | `ecs_login_mode` | `key_pair` | `key_pair` 或 `password` |
 | `ssh_key_pair_name` | `null` | 密钥模式必填已有密钥对名称 |
-| `ecs_password` | `null`，敏感 | 密码模式必填，8–30 位且符合 ECS 规则 |
+| `ecs_password` | `ReplaceWithStrongPassword123`，敏感 | 公开示例默认密码；实际密码登录应替换，密钥登录须显式设为 `null` |
 | `ssh_allowed_cidrs` | 必填 | 非空管理员 IPv4 CIDR 集合 |
 | `web_allowed_cidrs` | `[]` | 80/443 来源集合，空值关闭公网 Web 入站 |
 | `system_disk_size_gib` / `system_disk_type` | `100` / `ESSD_FlexPL` | 系统盘大小与类型，大小至少 40 GiB |
@@ -358,6 +355,41 @@ terraform plan -detailed-exitcode
 
 退出码 `0` 表示无变更，`2` 表示存在变更，`1` 表示错误。遇到已存在源码对象或回读 `Resource Not Found` 时，应先核对云端对象和 State，避免直接重复创建；历史对照中单并发通过，默认并发仍有第 3.3 节所述的读取异常。
 
+**安全组默认出站规则的收敛处理。** 若重复 Plan 拟删除优先级 `100`、描述为“放通全部流量”的默认规则，建议将它按实际回读属性纳入 `main.tf` 的 `volcenginecc_vpc_security_group.app.egress_permissions`，保留现有优先级 `1` 规则。以下为当前规则与已观察到的默认规则的完整配置示例；应用前核对实际回读中的所有字段，包括空字符串字段：
+
+```hcl
+egress_permissions = [
+  {
+    cidr_ip         = "0.0.0.0/0"
+    description     = "Allow DNS package downloads and model APIs"
+    direction       = "egress"
+    policy          = "accept"
+    port_start      = -1
+    port_end        = -1
+    priority        = 1
+    protocol        = "all"
+    prefix_list_id  = ""
+    source_group_id = ""
+  },
+  {
+    cidr_ip         = "0.0.0.0/0"
+    description     = "放通全部流量"
+    direction       = "egress"
+    policy          = "accept"
+    port_start      = -1
+    port_end        = -1
+    priority        = 100
+    protocol        = "all"
+    prefix_list_id  = ""
+    source_group_id = ""
+  },
+]
+```
+
+该示例用于匹配当前已存在的全放通规则，不能直接用于要求限制出站的环境。不建议用 `ignore_changes = [egress_permissions]` 隐藏整个规则集合的变化，否则模板调整和云端规则漂移都不会用于更新已有安全组。如果此前添加了该忽略设置，应在采用上述配置时移除它。
+
+保存后执行 `terraform plan -detailed-exitcode`。若规则属性与刷新结果一致，该项差异应消失，无需为消除这项差异先 Apply；其他真实配置变更仍需按计划处理。如果仍然拟修改默认规则，应继续检查字段规范化和 Provider/CCAPI 回读行为，不要反复 Apply 试图收敛。当前模板尚未自动纳入该规则，本段提供手动配置方案。
+
 #### 4.2.5 销毁资源
 
 销毁前备份 PostgreSQL、媒体、密钥和运行时配置，确认目录、Workspace、参数与凭据属于目标环境，再查看删除计划：
@@ -377,42 +409,7 @@ terraform state list
 - 等待秒数使用 State 中已应用的值；修改后需先审查并 Apply 才对后续销毁生效。若启用 ECS 删除保护，先按计划解除保护。
 - 完成后核对 State、控制台残留资源和费用；State 为空不表示保留盘或外部资源已经清理。
 
-### 4.3 本地应用开发
-
-**原生启动（WSL / Ubuntu）**：需要 Python 3.12、Node.js/npm、PostgreSQL 16、FFmpeg 和 OpenSSL；本项目已在 Node.js 24 环境验证。
-
-```bash
-sudo apt-get update
-sudo apt-get install -y postgresql-16 ffmpeg python3-venv openssl
-sudo pg_ctlcluster 16 main start
-bash scripts/setup-local.sh
-python3 -m venv .venv
-.venv/bin/pip install --index-url https://mirrors.ivolces.com/pypi/simple/ -r backend/requirements.txt
-sudo .venv/bin/python scripts/init-native-db.py
-bash scripts/run-native.sh
-```
-
-打开 `http://localhost:5173`，使用 `secrets/owner_password` 登录。用编辑器将 Ark Key 填入 `secrets/ark_api_key`，保持权限 `0600`。启动脚本运行在前台，Ctrl+C 停止 Web/API/Worker；API 监听 `127.0.0.1:8000`。Vite 开发服务监听所有接口，应只在受控开发环境使用。
-
-初始化脚本创建本应用角色、业务库 `animation_local` 和隔离测试库 `animation_test`。已有 PostgreSQL 可自行建库，并通过受保护环境变量 `DATABASE_URL` 指定连接串。
-
-**可选 Docker 开发方式**：
-
-```bash
-bash scripts/setup-local.sh
-docker compose -f compose.yaml -f compose.dev.yaml up -d --build --wait --wait-timeout 180
-docker compose ps
-```
-
-入口为 `http://localhost:8080`，默认仅绑定回环地址。`compose.yaml` 是交付配置，`compose.dev.yaml` 添加源码构建。编辑器可能通过替换文件保存密钥，更新后用以下命令重新挂载：
-
-```bash
-docker compose up -d --force-recreate api worker web --wait --wait-timeout 180
-```
-
-`docker compose stop` 停止服务并保留数据。Docker 数据库目录为 `data/postgres`，两种本地运行方式均将素材保存在 `work/media`、密钥保存在 `secrets/`、模型配置保存在 `config/runtime.json`。本地默认不启用 TOS 自动上传。
-
-### 4.4 创作、参考素材与任务恢复
+### 4.3 创作、参考素材与任务恢复
 
 - **项目与模型**：项目可搜索、归档和恢复，归档保留素材但不能继续编辑或生成。项目设置支持模型目录或自定义 Model ID/Endpoint；管理员可在运行配置的 `model_catalog` 中维护选项，目录不代表账号已开通权限。
 - **生成规格**：支持 16:9、9:16、1:1、4:3、3:4、21:9，480p/720p/1080p、声音、水印和 1–72 小时云端超时，默认 48 小时。fast/mini 不支持 1080p，1.0 pro 须关闭声音；未知接入点需补充能力映射。
@@ -425,7 +422,7 @@ docker compose up -d --force-recreate api worker web --wait --wait-timeout 180
 - **恢复规则**：已有方舟 Task ID 时继续查询和归档，不重复提交；明确终止后重提需确认计费。提交中断且没有记录 ID 时先在方舟核对并补充 ID，不要直接创建重复任务。剧本请求失败最多自动重试 2 次，总时限 10 分钟，支持取消。
 - **成片导出**：FFmpeg 统一画幅、24 fps、H.264/AAC 和 48 kHz 音频，按确认出点硬切；启用声音时为静音片段补音轨。模型实际时长和语音可能偏离剧本，需人工检查最终效果。
 
-### 4.5 素材备份与工程验证
+### 4.4 素材备份与运行检查
 
 云端默认启用 `storage.auto_upload=true`，目标来自 `bucket_name`，不是写死的桶名。备份覆盖已归档的新旧分镜视频、成片、模型结束帧、抽取参考帧、上传图片和选帧预览视频。
 
@@ -443,22 +440,17 @@ ECS 使用实例角色获取临时凭据，优先访问 TOS 内网 HTTPS Endpoin
 | 密钥 | `/opt/ai-animation/secrets/` |
 | 安装状态 | `/opt/ai-animation/deployment-status.json` |
 
-工程验证入口：
+在 ECS 上检查运行状态：
 
 ```bash
-python3 tests/verify-source-deployment.py
-python3 tests/verify-native-deployment.py
-python3 tests/verify-destroy-order.py
-# mock_provider 需要 Terraform >= 1.7，并准备好前端构建产物。
-terraform test -filter=tests/source-deployment.tftest.hcl
-# 需要已初始化的 animation_test、Python 环境、npm 及 Docker Compose 命令。
-bash scripts/verify-local.sh
-.venv/bin/python scripts/smoke-http.py --url http://localhost:5173
+sudo systemctl is-active ai-animation-api.service ai-animation-worker.service nginx.service
+curl --fail --silent --show-error --max-time 15 http://127.0.0.1:8080/api/health
+sudo journalctl -u ai-animation-worker.service -n 100 --no-pager
 ```
 
-`verify-local.sh` 使用隔离测试库并清空其中的业务测试表，不应指向生产数据库；包含前端构建和 Compose 配置检查。离线验证使用注入的测试模型，不调用计费方舟接口。数据库迁移通过 PostgreSQL advisory lock 串行执行，当前 schema 为 `6`，包含任务错误详情和独立媒体备份队列。
+确认服务为 `active`、健康接口返回 `{"status":"ok"}`，再核对界面中的备份状态和 Worker 日志。数据库迁移通过 PostgreSQL advisory lock 串行执行，当前 schema 为 `6`，包含任务错误详情和独立媒体备份队列。
 
-上述命令提供可重复执行的离线部署检查；目标环境仍需单独验收模型权限、应用健康、镜头连续性及数据恢复。
+目标环境的模型权限、应用健康、镜头连续性及数据恢复按第 4.1.4 节验收。自动化测试套件保留在开发仓库，不随本发布版本交付。
 
 ## 5. 适用范围与限制
 
