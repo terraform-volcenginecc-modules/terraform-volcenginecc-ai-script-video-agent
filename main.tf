@@ -162,7 +162,7 @@ resource "volcenginecc_iam_policy" "delivery" {
   count       = length(local.delivery_read_resources) > 0 ? 1 : 0
   policy_name = "${var.name_prefix}-delivery"
   policy_type = "Custom"
-  description = "Read only the pinned source release and optional Ark secret object"
+  description = "Read only the pinned source release"
   policy_document = jsonencode({
     Statement = [{
       Effect   = "Allow"

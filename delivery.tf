@@ -31,21 +31,9 @@ locals {
     chunk_size     = local.source_chunk_size
     chunk_count    = local.source_chunk_count
   })
-  secret_source = var.ark_secret_source != null ? var.ark_secret_source : (
-    var.source_release == null ? null : (
-      var.source_release.ark_secret_object_key == null ? null : {
-        bucket     = var.source_release.bucket
-        region     = var.source_release.region
-        endpoint   = var.source_release.endpoint
-        object_key = var.source_release.ark_secret_object_key
-        version_id = null
-      }
-    )
-  )
-  delivery_read_resources = concat(
-    var.source_release == null ? [] : ["trn:tos:::${var.source_release.bucket}/${var.source_release.object_key}"],
-    local.secret_source == null ? [] : ["trn:tos:::${local.secret_source.bucket}/${local.secret_source.object_key}"]
-  )
+  delivery_read_resources = var.source_release == null ? [] : [
+    "trn:tos:::${var.source_release.bucket}/${var.source_release.object_key}"
+  ]
 }
 
 # Only the application source parts and manifest are public. The bucket stays private.

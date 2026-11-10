@@ -85,7 +85,6 @@ def package(version, output):
         f'  object_key = "{metadata["object_key"]}"\n'
         f'  sha256     = "{digest}"\n'
         '  # version_id = "TOS object version ID"\n'
-        '  # ark_secret_object_key = "deployment-secrets/ark_api_key"\n'
         '}\n'
     )
     print(json.dumps(metadata, indent=2))

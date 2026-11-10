@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Root-only cloud-init installer. Configuration contains references, never credentials."""
+"""Root-only cloud-init installer."""
 import hashlib
 import importlib.util
 import base64
@@ -177,29 +177,18 @@ def main():
                         raise ValueError("Source archive SHA256 mismatch")
                     extract_release(archive, extracted)
                 extracted.rename(release)
-        # Keep the optional Ark key out of Terraform/user-data/logs/source bundles.
+        # The required key is written by cloud-init to a root-only file.
         phase = "configuring_secret"
         report(phase)
         secret = ROOT / "secrets/ark_api_key"
-        reference = config.get("secret_source")
-        if reference is None and config.get("ark_secret_object_key"):
-            reference = dict(config, object_key=config["ark_secret_object_key"], version_id=None)
-        if reference:
-            with tempfile.TemporaryDirectory(dir=ROOT / "secrets") as directory:
-                temporary = Path(directory) / "key"
-                download(client_for(reference), reference, reference["object_key"], temporary,
-                         reference.get("version_id"), max_bytes=16384)
-                data = temporary.read_bytes().strip()
-                if not data or b"\n" in data or b"\r" in data or b"\x00" in data:
-                    raise ValueError("Ark secret must be a nonempty single-line UTF-8 key")
-                data.decode("utf-8")
-                atomic_write(secret, data + b"\n")
-        elif not secret.exists():
-            atomic_write(secret, b"")
+        data = secret.read_bytes().strip() if secret.is_file() else b""
+        if not data or b"\n" in data or b"\r" in data or b"\x00" in data:
+            raise ValueError("Required Ark API key is missing or invalid")
+        data.decode("utf-8")
         phase = "starting"
         report(phase)
         install_native(release)
-        report("ready" if secret.stat().st_size else "ready_without_ark_key")
+        report("ready")
     except Exception:
         report(f"failed_{phase}")
         # Detailed SDK exceptions may contain authorization headers; do not print them.

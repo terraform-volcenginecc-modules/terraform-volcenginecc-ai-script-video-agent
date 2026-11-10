@@ -10,7 +10,7 @@ locals {
       manifest_sha256 = sha256(local.source_manifest)
       sha256          = local.source_payload_sha256
     } : {},
-    { role_name = volcenginecc_iam_role.app.role_name, secret_source = local.secret_source }
+    { role_name = volcenginecc_iam_role.app.role_name }
   )
   runtime_config = {
     infrastructure = {
@@ -48,6 +48,7 @@ locals {
     # bootcmd runs before set-passwords, while runcmd would be too late.
     bootcmd = [
       ["install", "-d", "-m", "0755", "/run/sshd"],
+      ["install", "-d", "-m", "0700", "/opt/ai-animation/secrets"],
       ["bash", "-c", "if [ -f /lib/systemd/system/ssh.service ] && [ ! -e /etc/systemd/system/sshd.service ]; then ln -s /lib/systemd/system/ssh.service /etc/systemd/system/sshd.service; fi; systemctl daemon-reload"],
       ["python3", "-c", <<-PYTHON
         import glob
@@ -82,6 +83,12 @@ locals {
         owner       = "root:root"
         permissions = "0644"
         content     = jsonencode(local.runtime_config)
+      },
+      {
+        path        = "/opt/ai-animation/secrets/ark_api_key"
+        owner       = "root:root"
+        permissions = "0600"
+        content     = "${trimspace(var.ark_api_key)}\n"
       },
       {
         path        = "/usr/local/sbin/ai-animation-prepare"

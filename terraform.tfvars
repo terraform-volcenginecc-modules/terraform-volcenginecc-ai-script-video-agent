@@ -1,5 +1,5 @@
 # Copy to terraform.tfvars and set the REQUIRED values from your cloud account.
-# Secrets must not be added to this file.
+# Supply secrets through sensitive platform inputs or TF_VAR_* environment variables.
 region       = "cn-beijing"
 name_prefix  = "ai-animation"
 project_name = "default"
@@ -28,13 +28,8 @@ ssh_key_pair_name = "wordpress"
 # content-addressed native runtime + prebuilt frontend, and starts ECS services.
 auto_source_upload = true
 
-# Optional existing PRIVATE secret object, separate from the public source bucket.
-# ark_secret_source = {
-#   bucket     = "your-existing-private-secret-bucket"
-#   region     = "cn-beijing"
-#   endpoint   = "https://tos-cn-beijing.volces.com"
-#   object_key = "deployment-secrets/ark_api_key"
-# }
+# REQUIRED: set ark_api_key as a sensitive platform input or TF_VAR_ark_api_key.
+# Do not commit the actual key to this file. Direct input stores it in Terraform state.
 
 # Add allowed browser access networks when the app is ready.
 web_allowed_cidrs = ["0.0.0.0/0"]
@@ -64,6 +59,4 @@ video_model_id  = "doubao-seedance-2-0-260128"
 #   object_key = "releases/v1/<full-sha256>/ai-animation-v1-<short-sha256>.tar.gz"
 #   sha256     = "<64 lowercase hexadecimal characters>"
 #   version_id = "<optional TOS version ID>"
-#   # Optional private single-line text object; NEVER put the actual key here.
-#   ark_secret_object_key = "deployment-secrets/ark_api_key"
 # }

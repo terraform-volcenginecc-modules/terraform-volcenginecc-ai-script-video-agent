@@ -211,6 +211,21 @@ variable "ark_base_url" {
   }
 }
 
+variable "ark_api_key" {
+  description = "Required Ark API key written to the ECS backend secret file. Supply it through a sensitive platform input or TF_VAR_ark_api_key; Terraform state contains this value."
+  type        = string
+  nullable    = false
+  sensitive   = true
+  validation {
+    condition = (
+      trimspace(var.ark_api_key) != "" &&
+      length(var.ark_api_key) <= 16384 &&
+      !can(regex("[\\n\\r\\x00]", var.ark_api_key))
+    )
+    error_message = "ark_api_key is required and must be a nonempty single-line value."
+  }
+}
+
 variable "script_model_id" {
   description = "Default script model; projects may override it in the application."
   type        = string
@@ -247,13 +262,12 @@ variable "application_compose_path" {
 variable "source_release" {
   description = "Optional immutable source object in an EXISTING private TOS delivery bucket. No signed URLs or secrets."
   type = object({
-    bucket                = string
-    region                = string
-    endpoint              = string
-    object_key            = string
-    sha256                = string
-    version_id            = optional(string)
-    ark_secret_object_key = optional(string)
+    bucket     = string
+    region     = string
+    endpoint   = string
+    object_key = string
+    sha256     = string
+    version_id = optional(string)
   })
   default  = null
   nullable = true
@@ -264,10 +278,7 @@ variable "source_release" {
       can(regex("^https://tos(-s3)?-[a-z0-9-]+\\.volces\\.com$", var.source_release.endpoint)) &&
       can(regex("^[a-f0-9]{64}$", var.source_release.sha256)) &&
       startswith(var.source_release.object_key, "releases/") &&
-      !can(regex("[*?\\n\\r]", var.source_release.object_key)) &&
-      (var.source_release.ark_secret_object_key == null ? true :
-        length(var.source_release.ark_secret_object_key) > 0 &&
-      !can(regex("[*?\\n\\r]", var.source_release.ark_secret_object_key)))
+      !can(regex("[*?\\n\\r]", var.source_release.object_key))
     )
     error_message = "Use a private TOS bucket, regional HTTPS endpoint, releases/ object key without wildcards, and lowercase SHA256."
   }
@@ -277,29 +288,6 @@ variable "auto_source_upload" {
   description = "Automatically upload native source and prebuilt frontend as 16 KiB public-read TOS parts plus a checksum manifest during apply. Existing source_release takes precedence."
   type        = bool
   default     = true
-}
-
-variable "ark_secret_source" {
-  description = "Optional EXISTING private TOS object containing a single-line Ark key. The template stores only this reference."
-  type = object({
-    bucket     = string
-    region     = string
-    endpoint   = string
-    object_key = string
-    version_id = optional(string)
-  })
-  default  = null
-  nullable = true
-  validation {
-    condition = var.ark_secret_source == null ? true : (
-      can(regex("^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$", var.ark_secret_source.bucket)) &&
-      can(regex("^[a-z]{2}-[a-z0-9-]+$", var.ark_secret_source.region)) &&
-      can(regex("^https://tos(-s3)?-[a-z0-9-]+\\.volces\\.com$", var.ark_secret_source.endpoint)) &&
-      length(var.ark_secret_source.object_key) > 0 &&
-      !can(regex("[*?\\n\\r]", var.ark_secret_source.object_key))
-    )
-    error_message = "Use an existing private bucket, regional HTTPS endpoint and object key without wildcards."
-  }
 }
 
 variable "tags" {
