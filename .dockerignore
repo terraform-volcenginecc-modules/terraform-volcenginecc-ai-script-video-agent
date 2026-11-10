@@ -11,6 +11,7 @@ work
 config/runtime.json
 frontend/node_modules
 frontend/dist
+tests/
 **/__pycache__
 **/.pytest_cache
 *.tfstate*

@@ -5,10 +5,12 @@ locals {
       "backend/app/${name}" => filebase64("${path.module}/backend/app/${name}")
       if endswith(name, ".py") && !can(regex("(^|/)(__pycache__|\\.venv)(/|$)", name))
     },
-    { for name in fileset("${path.module}/frontend/dist", "**") :
-      "frontend/dist/${name}" => filebase64("${path.module}/frontend/dist/${name}")
+    { for name in fileset("${path.module}/frontend/comfyui扩展", "**") :
+      "frontend/comfyui扩展/${name}" => filebase64("${path.module}/frontend/comfyui扩展/${name}")
     },
-    { for name in ["backend/requirements.txt", "frontend/nginx.conf", "frontend/nginx-public.conf", "scripts/ecs-native.py", "scripts/ecs-public-web.py"] :
+    { for name in ["backend/requirements.txt", "backend/comfyui扩展.py", "frontend/登录.html",
+      "frontend/登录.js", "frontend/nginx.conf", "frontend/nginx-public.conf", "scripts/ecs-native.py",
+      "scripts/ecs-public-web.py", "scripts/安装ComfyUI.py", "scripts/comfyui-requirements.txt", "开源组件.json"] :
       name => filebase64("${path.module}/${name}")
     }
   ))
@@ -70,8 +72,8 @@ resource "volcenginecc_tos_object" "source_parts" {
   tags                   = local.tags
   lifecycle {
     precondition {
-      condition     = fileexists("${path.module}/frontend/dist/index.html")
-      error_message = "Native delivery requires prebuilt frontend/dist. Use a published native template or build the frontend before Terraform."
+      condition     = fileexists("${path.module}/frontend/登录.html")
+      error_message = "缺少 ComfyUI 登录入口文件。"
     }
     precondition {
       condition     = local.source_size_valid

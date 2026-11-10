@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install an immutable release as native services on Ubuntu 24.04."""
+"""在 Ubuntu 24.04 安装官方 ComfyUI 与独立业务适配服务。"""
 import os
 import importlib.util
 import json
@@ -13,7 +13,6 @@ from urllib.parse import urlsplit
 ROOT = Path("/opt/ai-animation")
 SYSTEMD = Path("/etc/systemd/system")
 NGINX = Path("/etc/nginx")
-MIRROR = "https://mirrors.ivolces.com/pypi/simple/"
 
 
 def run(*args, **kwargs):
@@ -34,9 +33,25 @@ def worker_ready(pid):
 
 def service(release, kind):
     command = "-m uvicorn app.api:app --host 127.0.0.1 --port 8000" if kind == "api" else "-m app.worker"
+    working = release / "backend"
+    python = release / ".venv/bin/python"
+    if kind == "comfyui":
+        working = release / "ComfyUI"
+        python = release / ".comfyui-venv/bin/python"
+        command = ("main.py --cpu --listen 127.0.0.1 --port 8188 --disable-auto-launch "
+                   "--disable-all-custom-nodes --whitelist-custom-nodes ai_animation "
+                   "--disable-partner-nodes --user-directory /opt/ai-animation/work/comfyui/user "
+                   "--input-directory /opt/ai-animation/work/comfyui/input "
+                   "--output-directory /opt/ai-animation/work/comfyui/output "
+                   "--temp-directory /opt/ai-animation/work/comfyui/temp "
+                   "--database-url sqlite:////opt/ai-animation/work/comfyui/comfyui.db")
+    names = ["postgres_password", "owner_password", "session_key", "ark_api_key"]
+    runtime = json.loads((ROOT / "config/runtime.json").read_text())
+    if runtime.get("comfyui"):
+        names.append("comfyui_api_key")
     credentials = "\n".join(
         f"LoadCredential={name}:{ROOT}/secrets/{name}\nEnvironment={name.upper()}_FILE=%d/{name}"
-        for name in ("postgres_password", "owner_password", "session_key", "ark_api_key")
+        for name in names
     )
     return f"""[Unit]
 Description=AI animation {kind}
@@ -47,13 +62,13 @@ StartLimitIntervalSec=0
 [Service]
 User=ai-animation
 Group=ai-animation
-WorkingDirectory={release}/backend
+WorkingDirectory={working}
 Environment=DATABASE_HOST=127.0.0.1
 Environment=RUNTIME_CONFIG={ROOT}/config/runtime.json
 Environment=MEDIA_ROOT={ROOT}/work/media
 Environment=PYTHONUNBUFFERED=1
 {credentials}
-ExecStart={release}/.venv/bin/python {command}
+ExecStart={python} {command}
 Restart=always
 RestartSec=5
 TimeoutStopSec=120
@@ -85,16 +100,28 @@ def install(release):
         str(ROOT / "work"), str(ROOT / "work/media"))
     # Bootstrap has a restrictive umask; extracted source must be readable by service users.
     for path in release.rglob("*"):
-        if ".venv" in path.relative_to(release).parts:
+        if any(part in (".venv", ".comfyui-venv") for part in path.relative_to(release).parts):
             continue
         path.chmod(0o755 if path.is_dir() else 0o644)
     python = release / ".venv/bin/python"
     marker = release / ".native-installed"
+    spec = importlib.util.spec_from_file_location("comfyui_installer", release / "scripts/安装ComfyUI.py")
+    installer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(installer)
     if not marker.exists():
         run("python3", "-m", "venv", str(release / ".venv"))
-        run(str(python), "-m", "pip", "install", "--index-url", MIRROR,
-            "--disable-pip-version-check", "-r", str(release / "backend/requirements.txt"))
+        installer.install_packages(python, ["-r", str(release / "backend/requirements.txt")])
         marker.touch()
+    installer.install(release)
+    run("install", "-d", "-o", "ai-animation", "-g", "ai-animation", "-m", "0700",
+        str(ROOT / "work/comfyui"),
+        *(str(ROOT / "work/comfyui" / name) for name in ("user", "input", "output", "temp")))
+    # ComfyUI 使用自己的用户目录和数据库，官方源码保持只读。
+    for path in (release / "ComfyUI").rglob("*"):
+        path.chmod(0o755 if path.is_dir() else 0o644)
+    # 安装依赖后、启动服务前校验可选视频配置；不提交任何模型任务。
+    run(str(python), "-c", "from app.config import validate_video_config; validate_video_config()",
+        cwd=release / "backend", env={**os.environ, "RUNTIME_CONFIG": str(ROOT / "config/runtime.json")})
     run("systemctl", "enable", "--now", "postgresql.service")
     # Password travels on stdin, never through process arguments or environment.
     password = (ROOT / "secrets/postgres_password").read_text().strip()
@@ -112,12 +139,13 @@ def install(release):
                   capture_output=True, text=True)
     if present.stdout.strip() != "1":
         run("runuser", "-u", "postgres", "--", "createdb", "-O", "animation", "animation")
-    for kind in ("api", "worker"):
+    for kind in ("api", "worker", "comfyui"):
         write(SYSTEMD / f"ai-animation-{kind}.service", service(release, kind))
     nginx = (release / "frontend/nginx.conf").read_text()
     nginx = nginx.replace("listen 8080;", "listen 127.0.0.1:8080;")
-    nginx = nginx.replace("/usr/share/nginx/html", str(release / "frontend/dist"))
+    nginx = nginx.replace("/usr/share/nginx/html", str(release / "frontend"))
     nginx = nginx.replace("http://api:8000", "http://127.0.0.1:8000")
+    nginx = nginx.replace("http://comfyui:8188", "http://127.0.0.1:8188")
     storage = json.loads((ROOT / "config/runtime.json").read_text()).get("storage", {})
     media_origin = ""
     if storage.get("auto_upload"):
@@ -143,13 +171,14 @@ def install(release):
     public_web.configure(release / "frontend/nginx-public.conf", NGINX)
     run("nginx", "-t")
     run("systemctl", "daemon-reload")
-    run("systemctl", "enable", "ai-animation-api.service", "ai-animation-worker.service", "nginx.service")
-    run("systemctl", "restart", "ai-animation-api.service", "ai-animation-worker.service")
+    run("systemctl", "enable", "ai-animation-api.service", "ai-animation-worker.service",
+        "ai-animation-comfyui.service", "nginx.service")
+    run("systemctl", "restart", "ai-animation-api.service", "ai-animation-worker.service", "ai-animation-comfyui.service")
     run("systemctl", "restart", "nginx.service")
-    deadline = time.monotonic() + 120
+    deadline = time.monotonic() + 240
     while True:
         try:
-            with urllib.request.urlopen("http://127.0.0.1:8080/api/health", timeout=3) as response:
+            with urllib.request.urlopen("http://127.0.0.1:8080/studio-api/health", timeout=3) as response:
                 if response.status != 200:
                     raise RuntimeError("API not healthy")
             run("systemctl", "is-active", "--quiet", "ai-animation-worker.service")
@@ -158,6 +187,17 @@ def install(release):
                       capture_output=True, text=True).stdout.strip()
             if not worker_ready(pid):
                 raise RuntimeError("Worker queue not ready")
+            # 验证官方服务确实加载了业务节点，不提交模型任务。
+            cookie = run(str(release / ".venv/bin/python"), "-c",
+                         "from itsdangerous import URLSafeTimedSerializer; from pathlib import Path; "
+                         "print(URLSafeTimedSerializer(Path('/opt/ai-animation/secrets/session_key').read_text().strip(), "
+                         "salt='animation-owner-v1').dumps({'csrf':'health'}))",
+                         capture_output=True, text=True).stdout.strip()
+            request = urllib.request.Request("http://127.0.0.1:8188/object_info/VolcProject",
+                                             headers={"Cookie": "session=" + cookie})
+            with urllib.request.urlopen(request, timeout=5) as response:
+                if "VolcProject" not in json.load(response):
+                    raise RuntimeError("ComfyUI 业务节点未加载")
             break
         except Exception:
             if time.monotonic() >= deadline:

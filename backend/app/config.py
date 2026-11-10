@@ -1,5 +1,6 @@
 import json
 import os
+from copy import deepcopy
 from pathlib import Path
 from urllib.parse import quote
 
@@ -32,6 +33,37 @@ def ark_key():
     if os.getenv("ARK_API_KEY_FILE"):
         return secret("ark_api_key")
     return Path(path).read_text().strip() if path and Path(path).is_file() else secret("ark_api_key")
+
+
+def video_provider() -> str:
+    name = runtime().get("video_provider", "ark")
+    if name not in ("ark", "comfyui"):
+        raise ValueError("video_provider 只能选择 ark 或 comfyui")
+    return name
+
+
+def comfyui_config() -> dict:
+    from .comfyui_config import validate_config
+    config = deepcopy(runtime().get("comfyui", {}))
+    validate_config(config)
+    return config
+
+
+def comfyui_key(config) -> str:
+    if os.getenv("COMFYUI_API_KEY_FILE"):
+        return secret("comfyui_api_key")
+    path = Path(config.get("api_key_file", "/run/secrets/comfyui_api_key"))
+    return path.read_text().strip() if path.is_file() else ""
+
+
+def validate_video_config():
+    if video_provider() == "comfyui":
+        config = comfyui_config()
+        key = comfyui_key(config)
+        if not key or len(key) > 16384 or any(c in key for c in "\n\r\x00"):
+            raise ValueError("选择 ComfyUI 时必须提供有效的单行认证密钥文件")
+        if not runtime().get("storage", {}).get("auto_upload"):
+            raise ValueError("选择 ComfyUI 时必须启用私有 TOS 归档")
 
 
 def model_catalog():

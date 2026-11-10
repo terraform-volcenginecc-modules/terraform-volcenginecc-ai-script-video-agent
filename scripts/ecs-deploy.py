@@ -21,7 +21,9 @@ CHUNK_SIZE = 16 * 1024
 
 def validate_native_files(names):
     for name in ("backend/app/api.py", "backend/app/worker.py", "backend/requirements.txt",
-                 "frontend/dist/index.html", "frontend/nginx.conf", "scripts/ecs-native.py",
+                 "frontend/登录.html", "frontend/comfyui扩展/工作室.js",
+                 "backend/comfyui扩展.py", "开源组件.json", "scripts/安装ComfyUI.py",
+                 "frontend/nginx.conf", "scripts/ecs-native.py",
                  "frontend/nginx-public.conf", "scripts/ecs-public-web.py"):
         if name not in names:
             raise ValueError(f"Required native release file missing: {name}")

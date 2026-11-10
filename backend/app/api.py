@@ -12,7 +12,7 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import func, or_, select, text
 
-from .config import COOKIE_SECURE, ark_key, models, secret, model_catalog
+from .config import COOKIE_SECURE, ark_key, models, secret, model_catalog, video_provider, comfyui_config, validate_video_config
 from .db import Asset, Job, Project, Session, Shot, migrate, now, uid
 from .job_policy import SCRIPT_MAX_RETRIES, SCRIPT_TIMEOUT_SECONDS, script_deadline
 from .media import path_for, reference_frame, SIZES
@@ -30,11 +30,12 @@ login_attempts: dict[str, list[float]] = {}
 async def lifespan(app):
     if not secret("owner_password") or not secret("session_key"):
         raise RuntimeError("请先运行 scripts/setup-local.sh 创建登录密钥")
+    validate_video_config()
     migrate()
     yield
 
 
-app = FastAPI(title="帧序 · 本地创作工作室", lifespan=lifespan, docs_url=None, redoc_url=None)
+app = FastAPI(title="火山 · ComfyUI 业务适配", lifespan=lifespan, docs_url=None, redoc_url=None)
 
 
 def serializer():
@@ -118,7 +119,9 @@ def health():
 def configuration():
     config = models()
     return {"script_model": config["script_model_id"], "video_model": config["video_model_id"],
-            "provider": "方舟 · 真实模型接口", "storage": "私有 TOS" if storage_settings() else "本地持久化",
+            "provider": "方舟 · 剧本 / ComfyUI · 视频" if video_provider() == "comfyui" else "方舟 · 真实模型接口",
+            "video_provider": video_provider(),
+            "storage": "私有 TOS" if storage_settings() else "本地持久化",
             "model_catalog": model_catalog(), "ratios": list(SIZES),
             "key_configured": bool(ark_key())}
 
@@ -372,6 +375,11 @@ def reference_ratio_matches(reference, ratio):
 
 
 def validate_reference_mode(project, config, refs):
+    if video_provider() == "comfyui":
+        from .comfyui_config import validate_request
+        validate_request(comfyui_config(), video_settings(project), project.ratio,
+                         generation=config, references=refs)
+        return
     model = project.video_model
     if refs and not model.startswith(("doubao-seedance-2-0", "doubao-seedance-2-5", "doubao-seedance-1-0-pro")):
         raise ValueError("参考模式请使用明确的 Seedance Model ID")
@@ -391,7 +399,7 @@ def video_snapshot(db, project, shot):
         validate_reference_mode(project, generation_config(shot), refs)
     except (ValueError, OSError, KeyError) as error:
         raise HTTPException(409, str(error))
-    if reference and not project.video_model.startswith(("doubao-seedance-2-0", "doubao-seedance-2-5",
+    if video_provider() == "ark" and reference and not project.video_model.startswith(("doubao-seedance-2-0", "doubao-seedance-2-5",
                                                         "doubao-seedance-1-0-pro")):
         raise HTTPException(422, "首帧模式请使用已验证的 Seedance 2.0、2.5 或 1.0 pro Model ID")
     data = {**snapshot(project), "shot": shot.spec,
@@ -401,6 +409,16 @@ def video_snapshot(db, project, shot):
     except ValueError as error:
         raise HTTPException(422, str(error))
     data["prompt"] = build_prompt(data)
+    data["video_provider"] = video_provider()
+    if data["video_provider"] == "comfyui":
+        from .comfyui_config import validate_request
+        data["comfyui"] = comfyui_config()
+        data["seed"] = secrets.randbits(63)
+        try:
+            validate_request(data["comfyui"], data["video_settings"], project.ratio,
+                             shot.spec["duration"], data["generation_config"], refs)
+        except ValueError as error:
+            raise HTTPException(422, str(error))
     return data
 
 
@@ -413,8 +431,8 @@ def generation_preview(project_id: str, shot_id: str):
         data = video_snapshot(db, project, shot_locked(db, project_id, shot_id))
         return {"prompt": data["prompt"], "model": project.video_model,
                 "duration": data["shot"]["duration"],
-                "ratio": "adaptive" if data["reference"] else project.ratio,
-                **data["video_settings"], "return_last_frame": True,
+                "ratio": "adaptive" if data["reference"] and data["video_provider"] == "ark" else project.ratio,
+                **data["video_settings"], "return_last_frame": data["video_provider"] == "ark",
                 "reference_asset_id": data["reference"]["asset_id"] if data["reference"] else None,
                 "references": [{k: r[k] for k in ("asset_id", "role", "type", "duration", "url") if k in r}
                                for r in data["references"]],
@@ -462,22 +480,27 @@ def composition(project_id: str):
     with Session.begin() as db:
         project = project_locked(db, project_id)
         idle(db, project_id)
-        shots = list(db.scalars(select(Shot).where(Shot.project_id == project_id).order_by(Shot.position)))
-        if not shots or any(not s.asset_id or s.status != "succeeded" or needs_generation(db, s, project) for s in shots):
-            raise HTTPException(409, "所有镜头完成后才能拼接")
-        if any(not media_ready(db, s.asset_id) for s in shots):
-            raise HTTPException(409, "请等待所有镜头上传完成；上传失败可单独重试")
-        for shot in shots:
-            try:
-                references_snapshot(db, shot, project.ratio)
-            except (ValueError, OSError, KeyError):
-                raise HTTPException(409, "镜头参考来源已变化，请重新确认并生成")
-        job = Job(project_id=project_id, kind="compose",
-                  snapshot={**snapshot(project), "assets": [s.asset_id for s in shots],
-                            "cuts": [s.edit_config if s.edit_config.get("asset_id") == s.asset_id else {} for s in shots]})
-        db.add(job)
-        db.flush()
-        return job_data(job)
+        return queue_composition(db, project)
+
+
+def queue_composition(db, project):
+    project_id = project.id
+    shots = list(db.scalars(select(Shot).where(Shot.project_id == project_id).order_by(Shot.position)))
+    if not shots or any(not s.asset_id or s.status != "succeeded" or needs_generation(db, s, project) for s in shots):
+        raise HTTPException(409, "所有镜头完成后才能拼接")
+    if any(not media_ready(db, s.asset_id) for s in shots):
+        raise HTTPException(409, "请等待所有镜头上传完成；上传失败可单独重试")
+    for shot in shots:
+        try:
+            references_snapshot(db, shot, project.ratio)
+        except (ValueError, OSError, KeyError):
+            raise HTTPException(409, "镜头参考来源已变化，请重新确认并生成")
+    job = Job(project_id=project_id, kind="compose",
+              snapshot={**snapshot(project), "assets": [s.asset_id for s in shots],
+                        "cuts": [s.edit_config if s.edit_config.get("asset_id") == s.asset_id else {} for s in shots]})
+    db.add(job)
+    db.flush()
+    return job_data(job)
 
 
 @app.post("/api/jobs/{job_id}/cancel", dependencies=[Depends(authenticated)])
@@ -538,10 +561,17 @@ def recover(job_id: str, body: RecoveryInput):
                 if not body.acknowledge_duplicate_cost:
                     raise HTTPException(409, "模型已终止此任务，重新生成会再次调用模型；请确认可能计费")
                 job.external_id = None
+                if job.snapshot.get("video_provider") == "comfyui":
+                    job.snapshot = {k: v for k, v in job.snapshot.items() if k != "comfyui_job_url"}
             if body.external_id and job.phase != "rejected":
                 job.external_id = body.external_id
+                if job.snapshot.get("video_provider") == "comfyui":
+                    job.snapshot = {k: v for k, v in job.snapshot.items() if k != "comfyui_job_url"}
             if job.status == "uncertain" and not job.external_id and not body.acknowledge_duplicate_cost:
                 raise HTTPException(409, "请填写已受理任务 ID，或明确确认可能重复计费后重提")
+            if job.snapshot.get("video_provider") == "comfyui" and not job.external_id:
+                # 人工恢复会清零失败次数，另存本轮标识以免复用先前的幂等键。
+                job.snapshot = {**job.snapshot, "comfyui_submission_nonce": secrets.token_hex(16)}
             job.phase = "polling" if job.external_id else "pending"
             shot.status = "queued"
         elif job.kind == "compose":
@@ -664,3 +694,7 @@ def export_script(project_id: str):
         if not project:
             raise HTTPException(404, "项目不存在")
         return project.script
+
+
+# 官方 ComfyUI 的 HTTP 业务扩展入口；保持与原业务接口共用认证和事务。
+from . import native  # noqa: E402,F401

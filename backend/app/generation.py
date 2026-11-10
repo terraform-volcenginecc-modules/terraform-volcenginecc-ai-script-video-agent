@@ -11,7 +11,12 @@ def output_settings(settings):
             if k != "execution_expires_after"}
 
 
-def validate_settings(model, settings):
+def validate_settings(model, settings, provider=None):
+    from .config import comfyui_config, video_provider
+    if (provider or video_provider()) == "comfyui":
+        from .comfyui_config import validate_request
+        validate_request(comfyui_config(), settings)
+        return
     if settings["resolution"] == "1080p" and model.startswith(
         ("doubao-seedance-2-0-fast", "doubao-seedance-2-0-mini")
     ):

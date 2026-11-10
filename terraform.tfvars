@@ -12,20 +12,14 @@ instance_type     = "ecs.c3a.xlarge"
 bucket_name       = "ai-script-video-assets"
 ssh_allowed_cidrs = ["0.0.0.0/0"]
 
-# Default: key pair login. Supply an existing name, no private key is uploaded.
-ecs_login_mode = "key_pair"
-# Key-pair login must explicitly disable the example password default.
-ecs_password      = null
-ssh_key_pair_name = "wordpress"
-
-# Alternative: password login. Set the key-pair name to null or empty.
-# ecs_login_mode    = "password"
-# ssh_key_pair_name = null
-# Supply ecs_password through TF_VAR_ecs_password or a sensitive platform field.
-# Password is stored in Terraform state/plan; do not commit it to this file.
+# 使用密码登录，不再依赖未下载的 SSH 私钥。
+ecs_login_mode    = "password"
+ssh_key_pair_name = null
+# 通过本地部署脚本的 --ecs-password-file 或平台敏感字段传入 ecs_password。
+# 密码会进入 Terraform State 和 Plan，不将正文写入此文件。
 
 # Default: Terraform creates a private source bucket, uploads a public-read
-# content-addressed native runtime + prebuilt frontend, and starts ECS services.
+# application source and ComfyUI extensions, and starts ECS services.
 auto_source_upload = true
 
 # REQUIRED: set ark_api_key as a sensitive platform input or TF_VAR_ark_api_key.
@@ -47,7 +41,6 @@ ark_base_url    = "https://ark.cn-beijing.volces.com/api/v3"
 script_model_id = "doubao-seed-2-1-pro-260628"
 video_model_id  = "doubao-seedance-2-0-260128"
 
-# Cloud deployment is native; leave application_compose_path null.
 
 # Alternative: private, pre-uploaded archive. Overrides auto_source_upload.
 # Existing private delivery bucket; separate from the asset bucket above.

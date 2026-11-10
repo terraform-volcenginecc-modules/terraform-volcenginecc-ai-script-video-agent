@@ -8,11 +8,11 @@ from pathlib import Path
 
 from sqlalchemy import select, update
 
-from .config import POLL_SECONDS
+from .config import POLL_SECONDS, validate_video_config
 from .db import Asset, Job, Project, Session, Shot, migrate, now, uid
 from .job_policy import SCRIPT_MAX_RETRIES, script_deadline, timeout_script
 from .media import compose, download, image_info, path_for, probe, reference_frame
-from .provider import Ark, ProviderError
+from .provider import ProviderError, script_provider, video_provider
 from .schemas import Script
 from .storage import local_asset
 
@@ -38,7 +38,7 @@ def claim():
         for job in expired:
             if job.kind == "video" and job.phase == "submitting" and not job.external_id:
                 job.status = "uncertain"
-                job.error = "Worker 在提交期间中断，请先到方舟核对任务 ID；不会自动重提"
+                job.error = "Worker 在提交期间中断，请先到对应视频服务核对任务 ID；不会自动重提"
                 job.error_details = None
             else:
                 job.status = "queued"
@@ -113,7 +113,7 @@ def wait(row, seconds):
     row.lease_until = None
 
 
-def execute(job, provider_factory=Ark, downloader=download):
+def execute(job, provider_factory=None, downloader=None):
     provider = None
     stopped = threading.Event()
     thread = threading.Thread(target=heartbeat, args=(job, stopped), daemon=True)
@@ -139,7 +139,8 @@ def execute(job, provider_factory=Ark, downloader=download):
             return
 
         # Construct provider before persisting submitting: missing key cannot incur a charge.
-        provider = provider_factory()
+        provider = (provider_factory() if provider_factory else
+                    script_provider() if job.kind == "script" else video_provider(job.snapshot))
         if job.kind == "script":
             script = Script.model_validate(provider.script({
                 **job.snapshot, "_script_deadline": script_deadline(job).isoformat()
@@ -174,10 +175,13 @@ def execute(job, provider_factory=Ark, downloader=download):
                 if job.phase == "submitting":
                     raise ProviderError("视频提交结果需要人工核对", uncertain=True)
                 save(job, lambda db, row: setattr(row, "phase", "submitting"))
-                external_id = provider.submit(job.snapshot)
+                nonce = job.snapshot.get("comfyui_submission_nonce", "0")
+                external_id = provider.submit({**job.snapshot, "submission_key": f"{job.id}-{nonce}-{job.attempts}"})
 
                 def submitted(db, row):
                     row.external_id = external_id
+                    if getattr(provider, "job_url", None):
+                        row.snapshot = {**row.snapshot, "comfyui_job_url": provider.job_url}
                     row.phase = "polling"
                     wait(row, POLL_SECONDS)
                 save(job, submitted)
@@ -189,10 +193,11 @@ def execute(job, provider_factory=Ark, downloader=download):
             url = result["video_url"] if isinstance(result, dict) else result
             relative = f"{job.project_id}/shots/{job.id}/{job.owner}/video.mp4"
             target = path_for(relative)
-            downloader(url, target)
+            (downloader or getattr(provider, "download", download))(url, target)
             duration, metadata = probe(target)
             metadata["generation_config"] = job.snapshot.get("generation_config", {"mode": "text"})
             metadata["video_model"] = job.snapshot["video_model"]
+            metadata["video_provider"] = job.snapshot.get("video_provider", "ark")
             metadata["ratio"] = job.snapshot["ratio"]
             metadata["video_settings"] = job.snapshot.get("video_settings", {
                 "resolution": "720p", "generate_audio": True, "watermark": False})
@@ -276,12 +281,13 @@ def execute(job, provider_factory=Ark, downloader=download):
 
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    validate_video_config()
     migrate()
     from .storage import main as backup_loop
     backup_stopped = threading.Event()
     threading.Thread(target=backup_loop, args=(backup_stopped,), daemon=True).start()
     Path("/tmp/worker-heartbeat").touch()
-    log.info("Worker ready; PostgreSQL queue, real Ark provider")
+    log.info("Worker 已就绪，使用 PostgreSQL 队列和已配置的视频 Provider")
     while True:
         try:
             job = claim()

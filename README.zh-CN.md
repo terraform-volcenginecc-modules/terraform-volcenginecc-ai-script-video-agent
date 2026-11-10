@@ -1,6 +1,6 @@
 # AI 剧本与视频创作工作室
 
-使用 Terraform 和 `volcengine/volcenginecc` 在火山引擎创建网络、ECS、TOS 和实例角色，自动部署基于 React、FastAPI、Python Worker、PostgreSQL 和 FFmpeg 的单用户、多项目创作工作室。用户可以从故事创意生成剧本和分镜，逐镜头生成视频、配置参考素材，再拼接并下载成片。
+使用 Terraform 和 `volcengine/volcenginecc` 在火山引擎创建网络、ECS、TOS 和实例角色，自动下载并安装 ComfyUI 官方前后端。业务扩展通过独立 FastAPI、Python Worker、PostgreSQL 和 FFmpeg 接入 Ark 模型及私有 TOS。用户在官方画布运行项目、剧本、视频和拼接节点，在侧栏审阅分镜、恢复任务并预览成片。
 
 ## 1. 业务背景
 
@@ -16,9 +16,9 @@
 ## 2. 方案概述
 
 - **网络与计算**：独立 VPC、一个 `/24` 应用子网、安全组和 Ubuntu 24.04 ECS。ECS 内嵌公网 EIP，Nginx 提供前端与反向代理；Web 和 SSH 来源由参数控制。
-- **应用与数据库**：React/TypeScript 前端、FastAPI API 和独立 Python Worker；PostgreSQL 16 在 ECS 本机保存项目、分镜、任务、租约和备份队列。API 与数据库不开放公网端口。
+- **应用与数据库**：ComfyUI 官方前端和 Python 后端独立运行，自定义节点通过 HTTP 连接业务适配 API 和独立 Worker；PostgreSQL 16 在 ECS 本机保存项目、分镜、任务、租约和备份队列。API、ComfyUI 与数据库端口不直接对公网开放。
 - **模型**：默认使用 Doubao 2.1 生成剧本、Seedance 2.0 生成视频，项目可选择其他已开通模型或推理接入点。模板只配置模型 ID，不创建 Ark Endpoint 或 API Key。
-- **交付**：Terraform 将源码和预构建前端编码为 16 KiB 的 TOS 分片，全部上传后发布校验清单；ECS 下载、合并、校验，通过 systemd 安装和启动原生服务。
+- **交付**：Terraform 将业务扩展和安装脚本编码为 16 KiB 的 TOS 分片；ECS 下载并校验后，再拉取固定版本 ComfyUI 官方源码，校验 SHA256、安装官方前端包和 CPU 依赖，通过 systemd 启动。ECS 不安装视频模型，无需 npm 构建。
 - **素材与成片**：私有 TOS 保存最终素材，浏览器通过短期签名地址直连播放和下载。ECS 本地目录用于暂存、选帧和拼接，独立上传队列负责转存；处理时可从 TOS 恢复缺失的本地缓存。
 
 ```mermaid
@@ -26,8 +26,10 @@ flowchart TB
   User["浏览器用户"] -->|"HTTP 80 / HTTPS 443<br/>按配置放行"| EIP["ECS 内嵌 EIP"]
   subgraph VPC["VPC / 应用子网"]
     subgraph ECS["Ubuntu 24.04 ECS / systemd"]
-      EIP --> Nginx["Nginx / React 前端"]
-      Nginx -->|"127.0.0.1:8000"| API["FastAPI / 密码会话"]
+      EIP --> Nginx["Nginx / 登录与 WebSocket 转发"]
+      Nginx -->|"默认网页 / 8188"| Comfy["官方 ComfyUI 前后端 / 业务节点"]
+      Comfy -->|"内部 HTTP / 8000"| API["FastAPI 业务适配 / 密码会话"]
+      Nginx -->|"/studio-api/"| API
       API --> PG["本机 PostgreSQL 16<br/>项目 / 任务 / 备份队列"]
       Worker["Python Worker"] <-->|"领取任务 / 保存结果"| PG
       Worker --> FFmpeg["FFmpeg / 选帧与硬切拼接"]
@@ -44,7 +46,7 @@ flowchart TB
   Source["TOS 源码分片与清单<br/>对象公开读 / SHA256 校验"] -->|"HTTPS 下载"| ECS
 ```
 
-创作流程：**创建作品 → 生成剧本 → 编辑并确认分镜 → 逐镜头生成 → 审阅画面与衔接 → 拼接成片 → 预览或下载 MP4**。分镜可以导出为 JSON；项目支持创建、切换、搜索、归档和恢复。
+创作流程：**运行项目与剧本节点 → 侧栏审阅分镜 → 运行视频节点 → 运行拼接节点 → 预览或下载 MP4**。操作步骤见第 4 节。同轮次复用原项目和原任务，失败或待核对时由用户明确恢复。
 
 默认模型 ID 为 `doubao-seed-2-1-pro-260628` 和 `doubao-seedance-2-0-260128`，方舟地址为 `https://ark.cn-beijing.volces.com/api/v3`。部署前需要在目标账号确认模型权限与可用性。模型生成和重生成会产生调用费用，保存设置和预览提示词不会调用模型。
 
@@ -88,14 +90,19 @@ flowchart TB
 .
 ├── backend/
 │   ├── app/                     # API、Worker、模型适配、媒体处理与备份
+│   ├── comfyui扩展.py             # 官方自定义节点与登录保护
 │   └── requirements.txt
 ├── frontend/
-│   ├── src/                     # React/TypeScript 创作界面
-│   ├── dist/                    # 构建产物，自动交付前必须存在
+│   ├── comfyui扩展/              # 官方 ComfyUI 侧栏扩展
+│   ├── 登录.html
+│   ├── 登录.js
 │   ├── nginx.conf
 │   └── nginx-public.conf
 ├── scripts/
-│   ├── package-release.py       # 构建前端并生成完整交付包
+│   ├── package-release.py       # 生成完整交付包
+│   ├── 本地部署.py               # 凭据文件注入与完整 Terraform apply
+│   ├── 安装ComfyUI.py            # 官方源码校验、CPU 依赖与扩展安装
+│   ├── comfyui-requirements.txt # 工作室的固定 Python 依赖
 │   ├── ecs-bootstrap.sh         # ECS 安装入口
 │   ├── ecs-deploy.py            # 下载、合并和校验源码
 │   ├── ecs-native.py            # 数据库与 systemd 服务安装
@@ -110,13 +117,16 @@ flowchart TB
 ├── terraform.tfvars             # 本地部署参数
 ├── compose.yaml                 # 可选本地容器运行
 ├── compose.dev.yaml
+├── 开源组件.json                 # 官方版本、下载地址与 SHA256
+├── docs/视频适配说明.md           # 可选远程 GPU 视频服务配置
+├── tests/                       # 本地回归测试与假服务数据
 ├── README.md                    # 英文说明
 └── README.zh-CN.md               # 中文说明
 ```
 
-本发布目录包含预构建的 `frontend/dist/` 和已纳入版本管理的 `terraform.tfvars`；部署前应将环境参数替换为目标账号的配置，修改前端源码后需重新构建。`terraform.tfvars` 不进入自动生成的源码包；State、Plan、`.env`、`secrets/`、`config/runtime.json`、`data/` 和 `work/` 由 Git 忽略，且同样不进入源码包。部署与运维步骤见第 4 节。
+本发布目录包含业务扩展、登录入口、固定开源组件清单和 `terraform.tfvars`；部署前将环境参数替换为目标账号的配置。官方前端由 ComfyUI 安装依赖提供，无需 npm 构建。`terraform.tfvars` 不进入自动源码包；State、Plan、`.env`、`secrets/`、`config/runtime.json`、`data/` 和 `work/` 同样不进入源码包。部署与运维步骤见第 4 节。
 
-所有 Terraform 资源在根模块定义。启动链为 `bootstrap.tf` → `scripts/ecs-bootstrap.sh` → `scripts/ecs-deploy.py` → `scripts/ecs-native.py`；网页前后端源码完整包含在 `frontend/src/` 和 `backend/app/` 中。
+所有 Terraform 资源在根模块定义。启动链为 `bootstrap.tf` → `scripts/ecs-bootstrap.sh` → `scripts/ecs-deploy.py` → `scripts/ecs-native.py`。官方 ComfyUI 单独下载并安装；本工程维护 `frontend/comfyui扩展/`、`backend/comfyui扩展.py` 和 `backend/app/` 中的业务适配代码。
 
 ### 3.3 核心代码示例
 
@@ -156,22 +166,23 @@ InfraManager 是火山引擎提供的 Terraform 托管工作台，更多产品�
 
 通过 [火山方舟控制台](https://console.volcengine.com/ark) 开通剧本和视频模型，并创建有权调用所选模型的 API Key。Ark Key 与云账号 AK/SK、模型 ID 或 `ep-...` 接入点 ID 不同，部署时必须通过平台敏感参数 `ark_api_key` 提供。密钥文件与状态存储说明见第 3.1 节。
 
-ECS 需要访问 TOS、Ubuntu 软件源、Python 包源和方舟 HTTPS 接口。原生安装统一使用 `https://mirrors.ivolces.com/pypi/simple/`；前端在发布机预构建，ECS 不需要安装 npm 或 Docker。
+新 ECS 开机时自动安装，依赖包由公开源提供。ComfyUI 源码从 GitHub 下载并校验 SHA-256，失败时重试并尝试 GitHub 的归档直链。CPU PyTorch 先用上海交大镜像，失败后切换官方 CPU 源。普通 Python 包先用火山镜像，失败后切换官方 PyPI。ECS 还需要访问 TOS、Ubuntu 软件源和方舟 HTTPS 接口。
+
+工作室保留固定版本的官方前端和节点运行依赖，省去 ComfyUI 自带的示例工作流、示例媒体和内置节点文档。业务工作流仍可从「视频工作室」加载到画布。安装过程中无需提前上传依赖包。
 
 #### 4.1.2 选择模板
 
 打开 [InfraManager 控制台](https://console.volcengine.com/iac)，进入 **模板管理 > 公开模板**，搜索“AI 剧本与视频创作工作室”。
 
-上述搜索入口适用于模板已公开上架的情况，本文未确认上架状态。搜索不到时，按平台支持的自定义模板导入方式上传完整工程，必须保留根目录 Terraform 文件、`scripts/`、后端源码、Nginx 配置和 `frontend/dist/` 的相对目录结构。仅导入 `.tf` 文件无法完成应用安装。
+上述搜索入口适用于模板已公开上架的情况，本文未确认上架状态。搜索不到时，按平台支持的自定义模板导入方式上传完整工程，保留根目录 Terraform、`开源组件.json`、`scripts/`、后端源码、登录文件及 `frontend/comfyui扩展/` 的相对目录结构。仅导入 `.tf` 文件无法完成应用安装。
 
-发布者在安装 Node.js/npm 和 Python 3 的机器上执行：
+发布者在安装 Python 3 的机器上执行：
 
 ```bash
-npm --prefix frontend ci
 python3 scripts/package-release.py --version v2026.11.10-native
 ```
 
-脚本在本地工程根目录运行，需要 Python 3、Node.js/npm 及包源网络访问；会构建前端，并在 `releases/` 输出 `.tar.gz`、SHA256、元数据和私有发布包参数示例。重复运行相同版本会重新打包，内容变更后应使用新版本和新 SHA256；成功退出码为 `0`，构建或打包异常为非零，脚本未设置总超时，可用 Ctrl+C 停止。它不上传文件或创建云资源，临时产物不再使用后可自行删除。
+脚本在本地工程根目录运行，只需要 Python 3，不执行前端构建。生成源码包、SHA256、元数据和私有发布包参数示例；验证时通过 `--output` 指定工程外目录。内容变更后使用新版本和 SHA256。脚本不上传文件或创建云资源。
 
 源码发布包排除本地 `terraform.tfvars`、State、Plan、`.env`、密钥和媒体数据；内部包含供安装器校验的逐文件清单。该包用于 ECS 源码安装，不代替 InfraManager 所需的完整 Terraform 工程。部署参数按第 4.2.1 节单独提供。
 
@@ -181,7 +192,7 @@ python3 scripts/package-release.py --version v2026.11.10-native
 
 参数说明见第 4.2.1 节。必须提供 `zone_id`、`image_id`、`instance_type`、`bucket_name`、`ssh_allowed_cidrs`、`ark_api_key` 和登录模式对应的 ECS 凭据。
 
-默认密钥模式填写已有 `ssh_key_pair_name`，并显式将 `ecs_password` 设为 `null`；密码模式将密钥对名称留空，通过敏感参数提供真实 `ecs_password`，替换公开示例默认值。配置 `web_allowed_cidrs` 后才开放公网 80/443；空集合保留 SSH 隧道访问。
+密钥模式填写已有 `ssh_key_pair_name`，将 `ecs_password` 留空；密码模式将密钥对名称留空，通过敏感参数提供真实 `ecs_password`。当前本地参数文件采用密码模式。配置 `web_allowed_cidrs` 后才开放公网 80/443；空集合保留 SSH 隧道访问。
 
 检查计划中的分片数量、桶名、来源 CIDR、角色权限以及删除或替换动作，再执行部署。Terraform/资源栈成功表示资源创建完成，应用的下载和安装可能仍在进行。
 
@@ -204,17 +215,17 @@ python3 scripts/package-release.py --version v2026.11.10-native
 ```bash
 sudo cloud-init status
 sudo cat /opt/ai-animation/deployment-status.json
-sudo systemctl is-active ai-animation-api.service ai-animation-worker.service nginx.service
-curl --fail --silent --show-error --max-time 15 http://127.0.0.1:8080/api/health
+sudo systemctl is-active ai-animation-api.service ai-animation-worker.service ai-animation-comfyui.service nginx.service
+curl --fail --silent --show-error --max-time 15 http://127.0.0.1:8080/studio-api/health
 ```
 
-应用就绪后，部署状态的 `phase` 为 `ready`，三个常驻服务为 `active`，健康接口返回 `{"status":"ok"}`。Key 缺失或格式非法时安装会在 `configuring_secret` 阶段失败；Key 文件非空仍不等于模型权限已通过真实调用验证。
+应用就绪后，部署状态的 `phase` 为 `ready`，四个常驻服务为 `active`，健康接口返回 `{"status":"ok"}`。Key 缺失或格式非法时安装会在 `configuring_secret` 阶段失败；Key 文件非空仍不等于模型权限已通过真实调用验证。
 
 安装异常时查看状态与日志：
 
 ```bash
-sudo systemctl status ai-animation.service ai-animation-api.service ai-animation-worker.service nginx.service --no-pager
-sudo journalctl -u ai-animation.service -u ai-animation-api.service -u ai-animation-worker.service -n 100 --no-pager
+sudo systemctl status ai-animation.service ai-animation-api.service ai-animation-worker.service ai-animation-comfyui.service nginx.service --no-pager
+sudo journalctl -u ai-animation.service -u ai-animation-api.service -u ai-animation-worker.service -u ai-animation-comfyui.service -n 100 --no-pager
 ```
 
 更新 Ark Key 时应更新平台敏感参数并查看 Terraform Plan。修改 ECS User Data 不会让已有实例自动重跑 cloud-init；若实例未替换，需要通过受控运维流程更新 `/opt/ai-animation/secrets/ark_api_key` 并重启 API 和 Worker 服务。不要把密钥写进命令参数或日志。
@@ -229,14 +240,21 @@ sudo cat /opt/ai-animation/secrets/owner_password
 
 未开放公网 Web 时，按 `application_access.ssh_tunnel_command` 建立隧道，再打开 `http://127.0.0.1:8080`。该本地端口被其他应用占用时，可改用其他本地转发端口。
 
-业务验收：
+官方画布与业务验收：
 
-1. 创建测试作品，配置创意、两名角色、时长、画幅和模型，生成并审阅结构化剧本。
-2. 生成第一镜头，确认视频可播放；在下一镜头的“参考素材”中提取前镜头出点帧并预览，保存后手动生成。
-3. 检查人物、服装、动作和声音衔接；全部镜头就绪后拼接，在“我的成片”中播放并下载 MP4。
-4. 查看任务记录中的状态、方舟 Task ID 和失败诊断；确认视频和参考帧显示“已备份到云端”。
-5. 上传完成后，在浏览器开发者工具的网络面板确认预览和下载直接请求 TOS 签名地址；链接到期后重新打开预览，应能取得新地址。上传失败时点击“重试上传”，确认沿用原素材和方舟 Task ID。
-6. 按需重启 ECS，服务恢复后确认项目、任务和 TOS 素材仍可访问。此项检查持久化与服务自启动；数据库备份仍需单独准备。模型审核拒绝应按实际错误处理，不能以接口受理代替视频成功。
+1. 打开「视频工作室」，选择已有项目，或点击「加载新项目到画布」。在画布填写项目名称、创作轮次、要求和输出规格，再点官方「运行」。剧本生成后点击侧栏的「刷新状态」，选中项目。
+
+2. 在「审阅分镜」查看和编辑分镜，保存直接在侧栏完成。已有项目没有剧本时，先「加载剧本到画布」，再点「运行」。
+
+3. 审阅完成后，点击「加载视频到画布」，再点「运行」。结束后刷新状态；任务失败或待核对时，在「任务记录」恢复原任务。
+
+4. 所有镜头素材可用后，点击「加载拼接到画布」，再点「运行」。完成后刷新状态，在「拼接成片」预览或下载 MP4。
+
+5. 在浏览器网络面板确认预览和下载直接请求 TOS 签名地址。链接到期后刷新预览以获取新地址；归档失败时单独重试上传，确认沿用原素材和方舟 Task ID。
+
+6. 按需重启 ECS，确认服务自启动，项目、任务和 TOS 素材仍可访问。此项不能替代数据库备份或真实模型验收，也不能以接口受理代替视频成功。
+
+同一项目名称和创作轮次会复用项目与原任务；修改创作输入应使用新轮次。选择已有项目时，“已有项目编号”优先于节点的其他输入。中断画布执行只停止节点等待，已受理的业务任务继续保留；待核对任务不能自动重提。
 
 验证作品不再需要时可归档；归档保留素材，不释放存储。整体数据清理见第 4.2.5 节。
 
@@ -246,11 +264,21 @@ sudo cat /opt/ai-animation/secrets/owner_password
 
 以下 Terraform 命令在 macOS、Linux 或 WSL 的本项目根目录执行，用于部署云端资源；ECS 状态检查和密钥配置仍在 ECS 终端执行。
 
+已有 `~/.volcengine/config.json` AK 模式配置时，也可使用本地部署脚本直接注入凭据文件，执行 init、validate、完整 plan 和一次 apply。密码模式同时提供 ECS 密码文件：
+
+```bash
+python3 scripts/本地部署.py \
+  --ark-key-file "/本机方舟密钥文件的绝对路径" \
+  --ecs-password-file "/本机ECS密码文件的绝对路径"
+```
+
+脚本默认将 State、Plan、日志和输出存放在工程外的 `/tmp/ComfyUI完整部署`，目录权限为 `0700`；可用 `--work-dir` 指定其他工程外目录。该目录需妥善保留以便更新和销毁。计划包含删除或替换时脚本停止，apply 失败后保留 State，不自动重跑。
+
 #### 4.2.1 环境准备
 
 **基础环境**：
 
-准备 Terraform `>= 1.5.7, < 2.0`，以及可访问火山引擎 API 的网络环境。本发布目录已包含 `frontend/dist/`，部署前无需重新构建；发布打包需要 Python 3、Node.js/npm。Provider 版本由 `versions.tf` 固定，配置位于 `providers.tf`，当前未包含依赖锁文件，`terraform init` 会生成 `.terraform.lock.hcl`。
+准备 Terraform `>= 1.5.7, < 2.0`，以及可访问火山引擎 API 的网络环境。发布打包只需要 Python 3，官方 ComfyUI 在 ECS 上安装。Provider 版本由 `versions.tf` 固定，配置位于 `providers.tf`，`terraform init` 会生成 `.terraform.lock.hcl`。
 
 **服务与配额**：
 
@@ -290,7 +318,7 @@ export TF_VAR_ecs_password="<strong-password>"
 | `instance_type` | 必填 | 可用 CPU ECS 规格，建议 4 vCPU / 8 GiB 起 |
 | `ecs_login_mode` | `key_pair` | `key_pair` 或 `password` |
 | `ssh_key_pair_name` | `null` | 密钥模式必填已有密钥对名称 |
-| `ecs_password` | `ReplaceWithStrongPassword123`，敏感 | 公开示例默认密码；实际密码登录应替换，密钥登录须显式设为 `null` |
+| `ecs_password` | `null`，敏感 | 密码登录必须提供真实密码，密钥登录留空 |
 | `ssh_allowed_cidrs` | 必填 | 非空管理员 IPv4 CIDR 集合 |
 | `web_allowed_cidrs` | `[]` | 80/443 来源集合，空值关闭公网 Web 入站 |
 | `system_disk_size_gib` / `system_disk_type` | `100` / `ESSD_FlexPL` | 系统盘大小与类型，大小至少 40 GiB |
@@ -307,19 +335,18 @@ export TF_VAR_ecs_password="<strong-password>"
 | `ark_base_url` | `https://ark.cn-beijing.volces.com/api/v3` | 方舟 API 地址 |
 | `script_model_id` | `doubao-seed-2-1-pro-260628` | 默认剧本模型，可在项目内覆盖 |
 | `video_model_id` | `doubao-seedance-2-0-260128` | 默认视频模型，可在项目内覆盖 |
+| `video_provider` | `ark` | 可选 `comfyui` 远程视频服务；剧本继续使用 Ark |
+| `comfyui` | `null` | 选择 ComfyUI 时必填：真实 API 工作流、节点映射、能力与远程地址 |
+| `comfyui_api_key` | 空，敏感 | 选择 ComfyUI 时必填的 Bearer 密钥，直接写入 ECS 密钥文件 |
 | `media_url_ttl_seconds` | `900` | 素材签名地址有效期，整数 60–3600 秒；实例角色凭据剩余有效期不足时自动缩短 |
-| `application_compose_path` | `null` | 云端 Compose 模式已停用，保持空值 |
 
 两种登录凭据互斥：密钥模式只填写密钥对名称，密码模式只填写密码。`ark_api_key` 必须通过平台敏感参数或 `TF_VAR_ark_api_key` 提供。自动加载的 `terraform.tfvars` 优先于 `TF_VAR_*`；通过环境变量注入参数时，不要在参数文件中为同名变量赋值。
 
+CPU ECS 运行官方 ComfyUI 界面和 API 节点，模型计算默认使用 Ark，部署和操作见本节。`video_provider = "comfyui"` 额外选择远程 GPU 视频服务，其真实工作流配置见 [视频适配说明](docs/视频适配说明.md)。
+
 #### 4.2.2 场景化部署示例
 
-修改过前端源码时先重新构建；直接使用未修改的预构建发布版本时可跳过：
-
-```bash
-npm --prefix frontend ci
-npm --prefix frontend run build
-```
+官方前端随固定版本 ComfyUI 安装，不需要 npm 构建。修改业务侧栏后直接交付更新后的扩展文件。
 
 初始化与校验：
 
@@ -422,7 +449,7 @@ terraform output -json source_delivery
 
 #### 4.2.4 部署后验证
 
-从第 4.2.3 节的 `infrastructure.instance_id` 和 `application_access` 定位 ECS 与访问入口。自动交付和私有发布包模式按第 4.1.4 节检查安装状态、Web 登录、剧本、视频、首帧衔接、成片下载、签名地址和上传重试；私有模式还需确认 `source_delivery` 的桶、对象键及 SHA256 与发布包一致。
+从第 4.2.3 节的 `infrastructure.instance_id` 和 `application_access` 定位 ECS 与访问入口。自动交付和私有发布包模式按第 4.1.4 节验收工作室；私有模式还需确认 `source_delivery` 的桶、对象键及 SHA256 与发布包一致。
 
 仅基础设施模式在 ECS 控制台确认实例运行、所属 VPC/子网、安全组和角色正确，通过 SSH 确认 `cloud-init status` 完成及 `/opt/ai-animation/config/runtime.json` 存在；不要求应用服务为 `active`。所有模式都应确认安全组只允许指定来源访问 22/80/443，数据库与 API 端口未公开。
 
@@ -461,20 +488,12 @@ terraform state list
 - 等待秒数使用 State 中已应用的值；修改后需先审查并 Apply 才对后续销毁生效。若启用 ECS 删除保护，先按计划解除保护。
 - 完成后核对 State、控制台残留资源和费用；State 为空不表示保留盘或外部资源已经清理。
 
-### 4.3 创作、参考素材与任务恢复
+### 4.3 创作与任务恢复
 
-- **项目与模型**：项目可搜索、归档和恢复，归档保留素材但不能继续编辑或生成。项目设置支持模型目录或自定义 Model ID/Endpoint；管理员可在运行配置的 `model_catalog` 中维护选项，目录不代表账号已开通权限。
-- **生成规格**：支持 16:9、9:16、1:1、4:3、3:4、21:9，480p/720p/1080p、声音、水印和 1–72 小时云端超时，默认 48 小时。fast/mini 不支持 1080p，1.0 pro 须关闭声音；未知接入点需补充能力映射。
-- **修改与快照**：保存设置不自动生成。修改视频模型、画幅等规格会保留旧素材并标记需重生成；只修改剧本模型或超时不作废已有视频。任务冻结提交配置，恢复使用原快照。
-- **当前编辑限制**：项目中任一任务排队或执行时，页面会禁用整个项目的分镜编辑与生成操作。保存分镜会重置其视频关联和成片关联，即使内容未修改也会发生；TOS 文件仍保留，但页面没有历史视频恢复入口。保存已有视频的分镜前应先下载需要保留的作品。
-- **首帧衔接**：在后镜头的“参考素材”中选择首帧模式，按统一 24 fps 提取上一镜头出点帧，审阅后确认配置。确认同时保存上一镜头硬切出点，再手动生成后镜头；上游视频或出点变化后需重新确认引用。
-- **首尾帧与多模态**：文字、首帧、首尾帧、多模态参考为互斥模式。首尾帧需分别提供尺寸相同的起始与目标结束图片，即使是最后一个镜头也需要尾帧。图片接受 PNG/JPEG，单张不超过 29 MB，边长 300–6000，宽高比 0.4–2.5；首帧须匹配项目画幅，使用 `ratio=adaptive`。
-- **参考音视频**：多模态最多 9 张图片、3 份视频、3 份音频，总数不超过 12。每份音视频 2–15 秒，同类合计不超过 15 秒；音频须搭配视觉参考并启用声音。按类别顺序用“图片1”“视频1”“音频1”引用素材。
-- **地址与完整性**：图片由后端保存、绑定 SHA256 并以 Base64 提交，组合请求体受 64 MB 限制。输入音视频目前只接收受信域名的长期公网 HTTPS 地址，不接受临时签名查询参数或 `asset://`；实际格式、时长与可达性由方舟进一步校验。
-- **失败诊断**：“任务记录”提供中文解释、云端错误码、原因和 Request ID，可展开并复制，剪贴板不可用时支持手动复制。不保存完整响应体或密钥；历史未保存的错误详情无法重建。
-- **恢复规则**：已有方舟 Task ID 时继续查询和归档，不重复提交；明确终止后重提需确认计费。提交中断且没有记录 ID 时先在方舟核对并补充 ID，不要直接创建重复任务。剧本请求失败最多自动重试 2 次，总时限 10 分钟，支持取消。
-- **恢复与剧本互斥**：剧本或拼接任务活跃时不能恢复旧镜头视频，不同镜头的视频仍可排队。恢复接口加锁后重新核对最新任务状态，已恢复的任务返回 409；剧本替换前再次检查活跃旧镜头任务，保留其分镜关联并提示先处理任务。
-- **成片导出**：FFmpeg 统一画幅、24 fps、H.264/AAC 和 48 kHz 音频，按确认出点硬切；启用声音时为静音片段补音轨。模型实际时长和语音可能偏离剧本，需人工检查最终效果。
+- 在画布上选择剧本和视频模型。修改创作输入后，使用新轮次生成。模型 ID 或接入点需要在方舟账号下有调用权限。
+- 项目有活跃任务时，侧栏会暂停分镜编辑和重复生成。修改已有视频的分镜会清除当前视频和成片关联，已备份的文件仍在 TOS。
+- 在「任务记录」恢复失败或待核对的任务。已有方舟 Task ID 时继续查询和归档，提交结果不确定且未记录 ID 时先到方舟核对。
+- FFmpeg 将分镜拼接为 MP4。可在「拼接成片」预览和下载，验收时核对镜头顺序、画面和声音。
 
 ### 4.4 素材备份与运行检查
 
@@ -500,8 +519,8 @@ ECS 使用实例角色获取临时凭据，优先访问 TOS 内网 HTTPS Endpoin
 在 ECS 上检查运行状态：
 
 ```bash
-sudo systemctl is-active ai-animation-api.service ai-animation-worker.service nginx.service
-curl --fail --silent --show-error --max-time 15 http://127.0.0.1:8080/api/health
+sudo systemctl is-active ai-animation-api.service ai-animation-worker.service ai-animation-comfyui.service nginx.service
+curl --fail --silent --show-error --max-time 15 http://127.0.0.1:8080/studio-api/health
 sudo journalctl -u ai-animation-worker.service -n 100 --no-pager
 ```
 
@@ -518,7 +537,7 @@ sudo systemctl restart ai-animation-api.service
 
 需要暂停业务处理时，在 ECS 执行 `sudo systemctl stop ai-animation-api.service ai-animation-worker.service`；恢复使用相应的 `start` 命令。暂停不会删除任务或媒体，已提交的方舟任务仍可能继续运行和计费。
 
-目标环境的模型权限、应用健康、镜头连续性及数据恢复按第 4.1.4 节验收。自动化测试套件保留在开发仓库，不随本发布版本交付。
+目标环境的模型权限、应用健康和数据恢复按第 4.1.4 节验收。
 
 ## 5. 总结
 

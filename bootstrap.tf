@@ -12,7 +12,17 @@ locals {
     } : {},
     { role_name = volcenginecc_iam_role.app.role_name }
   )
-  runtime_config = {
+  comfyui_runtime = var.comfyui == null ? null : {
+    base_url       = var.comfyui.base_url
+    api_key_file   = "/opt/ai-animation/secrets/comfyui_api_key"
+    workflow       = try(jsondecode(var.comfyui.workflow_json), {})
+    bindings       = { for name, binding in var.comfyui.bindings : name => binding if binding != null }
+    output_node_id = var.comfyui.output_node_id
+    output_index   = var.comfyui.output_index
+    capabilities   = var.comfyui.capabilities
+  }
+  runtime_config = merge({
+    video_provider = var.video_provider
     infrastructure = {
       region    = var.region
       role_trn  = volcenginecc_iam_role.app.trn
@@ -39,7 +49,7 @@ locals {
       queue_backend       = "postgresql"
       composition_workers = 1
     }
-  }
+  }, local.comfyui_runtime == null ? {} : { comfyui = local.comfyui_runtime })
 
   cloud_init = "#cloud-config\n${jsonencode({
     package_update = true
@@ -82,7 +92,8 @@ locals {
         path        = "/opt/ai-animation/config/runtime.json"
         owner       = "root:root"
         permissions = "0644"
-        content     = jsonencode(local.runtime_config)
+        encoding    = "gz+b64"
+        content     = base64gzip(jsonencode(local.runtime_config))
       },
       {
         path        = "/opt/ai-animation/secrets/ark_api_key"
@@ -137,7 +148,12 @@ locals {
           WantedBy=multi-user.target
           UNIT
       }
-      ], !local.deployment_enabled ? [] : [
+      ], var.comfyui == null ? [] : [{
+        path        = "/opt/ai-animation/secrets/comfyui_api_key"
+        owner       = "root:root"
+        permissions = "0600"
+        content     = "${trimspace(var.comfyui_api_key)}\n"
+      }], !local.deployment_enabled ? [] : [
       {
         path        = "/opt/ai-animation/config/deployment.json"
         owner       = "root:root"

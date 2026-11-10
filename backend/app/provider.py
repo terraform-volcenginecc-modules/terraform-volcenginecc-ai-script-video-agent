@@ -25,6 +25,21 @@ class ProviderError(Exception):
         self.details = details
 
 
+def script_provider():
+    return Ark()
+
+
+def video_provider(snapshot):
+    # 旧任务未记录 Provider，必须继续按 Ark 恢复，不能跟随当前配置切换。
+    name = snapshot.get("video_provider", "ark")
+    if name == "ark":
+        return Ark()
+    if name == "comfyui":
+        from .comfyui import ComfyUI
+        return ComfyUI(snapshot["comfyui"], snapshot.get("comfyui_job_url"))
+    raise ProviderError("任务记录中的视频 Provider 无效")
+
+
 class Ark:
     def __init__(self):
         key = ark_key()

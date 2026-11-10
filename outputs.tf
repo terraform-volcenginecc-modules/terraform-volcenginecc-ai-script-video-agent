@@ -43,8 +43,8 @@ output "application_access" {
     source_deploy_enabled  = local.deployment_enabled
     ecs_login_mode         = var.ecs_login_mode
     deployment_status_path = "/opt/ai-animation/deployment-status.json"
-    status_command         = "sudo systemctl status ai-animation.service ai-animation-api.service ai-animation-worker.service nginx.service; sudo cat /opt/ai-animation/deployment-status.json"
-    log_command            = "sudo journalctl -u ai-animation.service -u ai-animation-api.service -u ai-animation-worker.service -n 100 --no-pager"
+    status_command         = "sudo systemctl status ai-animation.service ai-animation-comfyui.service ai-animation-api.service ai-animation-worker.service nginx.service; sudo cat /opt/ai-animation/deployment-status.json"
+    log_command            = "sudo journalctl -u ai-animation.service -u ai-animation-comfyui.service -u ai-animation-api.service -u ai-animation-worker.service -n 100 --no-pager"
   }
 }
 

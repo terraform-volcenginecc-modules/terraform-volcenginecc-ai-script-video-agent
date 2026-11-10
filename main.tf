@@ -223,6 +223,10 @@ resource "volcenginecc_ecs_instance" "app" {
 
   lifecycle {
     precondition {
+      condition     = var.video_provider != "comfyui" || (var.comfyui != null && trimspace(var.comfyui_api_key) != "")
+      error_message = "选择 comfyui 时必须同时提供远程服务工作流配置和 comfyui_api_key；ark_api_key 仍为必填。"
+    }
+    precondition {
       condition = (
         (var.ecs_login_mode == "key_pair" && local.ecs_key_pair != null && !local.ecs_has_password) ||
         (var.ecs_login_mode == "password" && local.ecs_key_pair == null && local.ecs_has_password)

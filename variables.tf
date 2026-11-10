@@ -78,9 +78,9 @@ variable "ecs_login_mode" {
 }
 
 variable "ecs_password" {
-  description = "Initial ECS password for password login. Replace the public example default for real deployments; set null for key_pair login. Supply a sensitive platform input or TF_VAR_ecs_password; Terraform state/plan contains this value."
+  description = "密码登录时必须提供 ECS 初始密码；密钥登录时留空。通过平台敏感字段或 TF_VAR_ecs_password 注入，值会进入 Terraform State 和 Plan。"
   type        = string
-  default     = "ReplaceWithStrongPassword123"
+  default     = null
   nullable    = true
   sensitive   = true
   validation {
@@ -238,6 +238,72 @@ variable "video_model_id" {
   default     = "doubao-seedance-2-0-260128"
 }
 
+variable "video_provider" {
+  description = "视频服务选择；ark 为默认值，comfyui 调用独立 GPU 服务，剧本始终使用 Ark。"
+  type        = string
+  default     = "ark"
+  nullable    = false
+  validation {
+    condition     = contains(["ark", "comfyui"], var.video_provider)
+    error_message = "video_provider 只能选择 ark 或 comfyui。"
+  }
+}
+
+variable "comfyui_api_key" {
+  description = "ComfyUI Bearer 认证密钥；选择 comfyui 时必填，直接写入 ECS 密钥文件，敏感值仍进入 Terraform State。"
+  type        = string
+  default     = ""
+  nullable    = false
+  sensitive   = true
+  validation {
+    condition     = length(var.comfyui_api_key) <= 16384 && !can(regex("[\\n\\r\\x00]", var.comfyui_api_key))
+    error_message = "ComfyUI 密钥必须是长度不超过 16384 的单行值。"
+  }
+}
+
+variable "comfyui" {
+  description = "远程 Comfy API v2 契约；只接受真实 API 格式 Workflow JSON 和明确节点映射，不安装 GPU 服务或模型。"
+  type = object({
+    base_url       = string
+    workflow_json  = string
+    output_node_id = string
+    output_index   = optional(number, 0)
+    bindings = object({
+      prompt           = object({ node_id = string, input = string })
+      duration         = object({ node_id = string, input = string })
+      width            = object({ node_id = string, input = string })
+      height           = object({ node_id = string, input = string })
+      seed             = object({ node_id = string, input = string })
+      generate_audio   = optional(object({ node_id = string, input = string }))
+      watermark        = optional(object({ node_id = string, input = string }))
+      first_frame      = optional(object({ node_id = string, input = string }))
+      last_frame       = optional(object({ node_id = string, input = string }))
+      reference_images = optional(list(object({ node_id = string, input = string })))
+    })
+    capabilities = object({
+      modes          = list(string)
+      resolutions    = list(string)
+      ratios         = list(string)
+      min_duration   = number
+      max_duration   = number
+      generate_audio = list(bool)
+      watermark      = list(bool)
+    })
+  })
+  default = null
+  validation {
+    condition = var.comfyui == null ? true : (
+      can(regex("^https?://[^/?#\\s@]+(/[^?#\\s]*)?$", var.comfyui.base_url)) &&
+      can(jsondecode(var.comfyui.workflow_json)) &&
+      try(length(keys(jsondecode(var.comfyui.workflow_json))) > 0 &&
+        !contains(keys(jsondecode(var.comfyui.workflow_json)), "nodes") &&
+      !contains(keys(jsondecode(var.comfyui.workflow_json)), "links"), false) &&
+      var.comfyui.output_index >= 0 && floor(var.comfyui.output_index) == var.comfyui.output_index
+    )
+    error_message = "ComfyUI 地址须为 HTTP(S) 服务地址；必须提供非空 API 格式 Workflow JSON，输出序号须为非负整数。"
+  }
+}
+
 variable "media_url_ttl_seconds" {
   description = "素材签名地址有效期（秒）；实例角色凭证剩余有效期不足时会自动缩短。"
   type        = number
@@ -245,17 +311,6 @@ variable "media_url_ttl_seconds" {
   validation {
     condition     = var.media_url_ttl_seconds >= 60 && var.media_url_ttl_seconds <= 3600 && floor(var.media_url_ttl_seconds) == var.media_url_ttl_seconds
     error_message = "素材签名地址有效期须为 60 到 3600 之间的整数。"
-  }
-}
-
-variable "application_compose_path" {
-  description = "Removed cloud Compose mode. Leave null; cloud deployment uses native services."
-  type        = string
-  default     = null
-  nullable    = true
-  validation {
-    condition     = var.application_compose_path == null
-    error_message = "Cloud Compose mode was removed. Leave application_compose_path null and use native source delivery."
   }
 }
 
@@ -285,7 +340,7 @@ variable "source_release" {
 }
 
 variable "auto_source_upload" {
-  description = "Automatically upload native source and prebuilt frontend as 16 KiB public-read TOS parts plus a checksum manifest during apply. Existing source_release takes precedence."
+  description = "Automatically upload application source and ComfyUI extensions as 16 KiB public-read TOS parts plus a checksum manifest. Existing source_release takes precedence."
   type        = bool
   default     = true
 }

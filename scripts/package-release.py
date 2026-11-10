@@ -8,7 +8,6 @@ import json
 from pathlib import Path
 import re
 import tarfile
-import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 EXCLUDED = {
@@ -19,21 +18,28 @@ TOP_FILES = {
     "compose.yaml", "compose.dev.yaml", ".dockerignore", ".env.example",
     "README.md", "README.zh-CN.md", ".gitignore", ".gitattributes",
     "versions.tf", "providers.tf", "variables.tf", "main.tf",
-    "bootstrap.tf", "outputs.tf", "delivery.tf",
+    "bootstrap.tf", "outputs.tf", "delivery.tf", "docs/视频适配说明.md",
+    "开源组件.json",
 }
 
 
 def package(version, output):
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}", version):
         raise ValueError("Version must contain only letters, digits, dot, dash or underscore")
-    if not (ROOT / "frontend/dist/index.html").is_file():
-        raise ValueError("Native release requires prebuilt frontend/dist")
+    if not (ROOT / "frontend/登录.html").is_file():
+        raise ValueError("发布包缺少 ComfyUI 登录入口")
     paths = [ROOT / name for name in TOP_FILES if (ROOT / name).is_file()]
     for directory in ("backend", "frontend", "scripts"):
         for path in (ROOT / directory).rglob("*"):
             relative = path.relative_to(ROOT)
             if any(part in EXCLUDED or part.startswith(".env") for part in relative.parts):
                 continue
+            if directory == "frontend":
+                if (relative.parts[1] != "comfyui扩展"
+                        and relative.as_posix() not in {"frontend/登录.html", "frontend/登录.js",
+                                                       "frontend/nginx.conf", "frontend/nginx-public.conf",
+                                                       "frontend/Dockerfile"}):
+                    continue
             if path.is_symlink():
                 raise ValueError(f"Symlink is not allowed: {relative}")
             if path.is_file():
@@ -95,6 +101,4 @@ if __name__ == "__main__":
     parser.add_argument("--version", required=True)
     parser.add_argument("--output", type=Path, default=ROOT / "releases")
     args = parser.parse_args()
-    # Build on the publisher's machine. Stack users and ECS need no Node/npm.
-    subprocess.run(["npm", "--prefix", str(ROOT / "frontend"), "run", "build"], check=True)
     package(args.version, args.output.resolve())

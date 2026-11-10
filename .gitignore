@@ -11,8 +11,11 @@ secrets/
 .venv/
 __pycache__/
 .pytest_cache/
-frontend/node_modules/
-# Keep prebuilt frontend/dist in this release repository for direct deployment.
+# 本地缓存和系统生成文件不进入源码。
+node_modules/
+frontend/dist/
+.DS_Store
+.screenshots/
 data/
 work/
 config/runtime.json
