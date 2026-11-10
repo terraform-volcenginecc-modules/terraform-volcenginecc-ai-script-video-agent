@@ -113,7 +113,7 @@ N 随源码与前端产物大小变化，以执行计划及 `source_delivery.chu
 └── README.zh-CN.md               # 中文说明
 ```
 
-本发布目录包含预构建的 `frontend/dist/` 和当前环境的本地参数文件 `terraform.tfvars`；部署前应按目标账号核对参数，修改前端源码后需重新构建。`terraform.tfvars`、State、Plan、`.env`、`secrets/`、`config/runtime.json`、`data/` 和 `work/` 仍由 Git 忽略，且不进入自动生成的源码包。部署与运维步骤见第 4 节。
+本发布目录包含预构建的 `frontend/dist/` 和已纳入版本管理的 `terraform.tfvars`，其中保存当前目标环境的部署参数；部署前应按目标账号核对参数，修改前端源码后需重新构建。`terraform.tfvars` 仍不进入自动生成的源码包；State、Plan、`.env`、`secrets/`、`config/runtime.json`、`data/` 和 `work/` 仍由 Git 忽略，且同样不进入源码包。部署与运维步骤见第 4 节。
 
 ### 3.3 核心代码示例
 

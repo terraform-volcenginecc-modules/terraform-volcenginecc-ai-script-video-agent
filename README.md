@@ -113,7 +113,7 @@ Both source and media buckets have private bucket ACLs. Only automatically deliv
 └── README.zh-CN.md               # Chinese documentation
 ```
 
-This release directory includes prebuilt `frontend/dist/` for direct deployment and a local `terraform.tfvars` containing the current environment's parameters. Review these parameters for the target account before deployment, and rebuild the frontend after changing its source. `terraform.tfvars`, state, plans, `.env`, `secrets/`, `config/runtime.json`, `data/`, and `work/` remain excluded from Git and automatic source archives. Deployment and operations are covered in section 4.
+This release directory includes prebuilt `frontend/dist/` for direct deployment and a tracked `terraform.tfvars` containing the current target environment's parameters. Review these parameters for the target account before deployment, and rebuild the frontend after changing its source. `terraform.tfvars` remains excluded from automatic source archives, while state, plans, `.env`, `secrets/`, `config/runtime.json`, `data/`, and `work/` remain excluded from both Git and those archives. Deployment and operations are covered in section 4.
 
 ### 3.3 Key Code Examples
 
