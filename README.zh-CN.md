@@ -450,6 +450,8 @@ terraform destroy
 terraform state list
 ```
 
+> **重要：销毁不会自动清空媒资桶。** 如果桶内仍有运行时上传的媒体、历史版本、删除标记或未完成分片，删除 `ai-script-video-assets` 会返回 `ResourceConflict` 或 `BucketNotEmpty`，资源栈显示 `DESTROY_FAILED`。这类失败需要人工处理，不是等待后会自动恢复的临时错误。请在 TOS 控制台清空上述数据，确认对象、历史版本、删除标记和未完成分片均为 `0`，再回到 InfraManager 重新执行销毁，或在本地重新运行 `terraform destroy`。仅反复执行销毁不能保证成功。
+
 当前 `main.tf` 的媒资桶设置为 `prevent_destroy = false`，源码桶也未开启该保护，不能依赖 Terraform 阻止桶删除。运行时上传的媒体不是独立 Terraform 资源；非空桶、历史版本或删除标记可能阻止删除，需要按已确认的数据保留方案单独处理，不要将“创建了备份”等同于“可以删除备份桶”。
 
 - 系统盘默认 `delete_system_disk_with_instance = true`，随 ECS 删除，其中的 PostgreSQL 数据、本地媒体、密钥和运行配置也会删除，销毁前应备份需要保留的数据。设为 `false` 则保留系统盘并继续计费。

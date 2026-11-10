@@ -450,6 +450,8 @@ terraform destroy
 terraform state list
 ```
 
+> **Important: destruction does not empty the media bucket automatically.** If the bucket still contains runtime media, historical versions, delete markers, or incomplete multipart uploads, deletion of `ai-script-video-assets` returns `ResourceConflict` or `BucketNotEmpty`, leaving the stack in `DESTROY_FAILED`. This failure requires manual cleanup and is not a transient condition that resolves by waiting. In the TOS console, remove all of the data listed above and confirm that objects, historical versions, delete markers, and incomplete multipart uploads are all at `0`. Then run destroy again in InfraManager or rerun `terraform destroy` locally. Repeating destroy without cleanup is not guaranteed to succeed.
+
 The media bucket in the current `main.tf` has `prevent_destroy = false`, and the source bucket has no such protection. Do not rely on Terraform to prevent bucket deletion. Runtime media uploads are not separate Terraform resources. Nonempty buckets, historical versions, or delete markers may block deletion and require handling according to the agreed retention plan. Having a backup does not mean its bucket can be deleted.
 
 - `delete_system_disk_with_instance = true` deletes the system disk with ECS by default, including its PostgreSQL data, local media, secrets, and runtime configuration. Back up required data before destruction. Set it to `false` to retain the disk and continue billing.
