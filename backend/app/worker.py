@@ -14,6 +14,7 @@ from .job_policy import SCRIPT_MAX_RETRIES, script_deadline, timeout_script
 from .media import compose, download, image_info, path_for, probe, reference_frame
 from .provider import Ark, ProviderError
 from .schemas import Script
+from .storage import local_asset
 
 log = logging.getLogger("worker")
 LEASE_SECONDS = 60
@@ -120,7 +121,7 @@ def execute(job, provider_factory=Ark, downloader=download):
     try:
         if job.kind == "compose":
             with Session() as db:
-                sources = [path_for(db.get(Asset, asset_id).path) for asset_id in job.snapshot["assets"]]
+                sources = [local_asset(db, db.get(Asset, asset_id)) for asset_id in job.snapshot["assets"]]
             relative = f"{job.project_id}/exports/{job.id}/{job.owner}/film.mp4"
             target = path_for(relative)
             settings = job.snapshot.get("video_settings", {})

@@ -2,6 +2,7 @@ import {useEffect, useRef, useState} from 'react'
 import {X, Play, LoaderCircle} from 'lucide-react'
 import './continuity.css'
 import {BackupStatus} from './BackupStatus'
+import {MediaImage, MediaVideo} from './Media'
 
 type Frame = {asset_id:string; origin?:string; width:number; height:number; source_asset_id?:string; frame_index:number; out_frame_exclusive:number; frame_count:number; time:number}
 type Remote = {kind:'video'|'audio';url:string;duration:number}
@@ -111,10 +112,10 @@ export function ContinuityPanel({projectId, shot, previous, request, onSaved, on
       <option value="first_last_frame">首尾帧</option><option value="reference">多模态参考</option>
     </select></label>
     {firstMode&&<label>上传首帧（PNG / JPEG，29 MB 内，边长 300–6000）<input type="file" accept="image/png,image/jpeg" disabled={working} onChange={e=>{upload(e.target.files?.[0],'first');e.target.value=''}}/></label>}
-    {mode==='first_last_frame'&&<label>上传尾帧（尺寸须与首帧一致）<input type="file" accept="image/png,image/jpeg" disabled={working} onChange={e=>{upload(e.target.files?.[0],'last');e.target.value=''}}/>{lastId&&<><img src={`/api/assets/${lastId}`} alt="选定的尾帧" style={{maxHeight:180,maxWidth:'100%'}}/><BackupStatus assetId={lastId} request={request}/></>}</label>}
+    {mode==='first_last_frame'&&<label>上传尾帧（尺寸须与首帧一致）<input type="file" accept="image/png,image/jpeg" disabled={working} onChange={e=>{upload(e.target.files?.[0],'last');e.target.value=''}}/>{lastId&&<><MediaImage assetId={lastId} alt="选定的尾帧" style={{maxHeight:180,maxWidth:'100%'}}/><BackupStatus assetId={lastId} request={request}/></>}</label>}
     {mode==='reference'&&<>
       <label>上传角色／场景参考图（最多 9 张）<input type="file" accept="image/png,image/jpeg" disabled={working||images.length>=9} onChange={e=>{upload(e.target.files?.[0],'reference');e.target.value=''}}/></label>
-      {images.map((id,i)=><div className="reference-frame" key={id}><img src={`/api/assets/${id}`} alt={`参考图片 ${i+1}`}/><div>图片 {i+1}<BackupStatus assetId={id} request={request}/><button className="text-button" disabled={working} onClick={()=>{setImages(images.filter(v=>v!==id));setSaved(false)}}>移除</button></div></div>)}
+      {images.map((id,i)=><div className="reference-frame" key={id}><MediaImage assetId={id} alt={`参考图片 ${i+1}`}/><div>图片 {i+1}<BackupStatus assetId={id} request={request}/><button className="text-button" disabled={working} onClick={()=>{setImages(images.filter(v=>v!==id));setSaved(false)}}>移除</button></div></div>)}
       <p className="muted">视频／音频需提供可供方舟读取的长期公网 HTTPS 地址，不支持本地文件或临时签名链接。各最多 3 份，总时长各不超过 15 秒；时长请按原素材填写，云端会校验实际素材。</p>
       {remotes.map((r,i)=><div key={i}>
         <label>参考 {i+1} 类型<select disabled={working} value={r.kind} onChange={e=>{setRemotes(remotes.map((v,n)=>n===i?{...v,kind:e.target.value as Remote['kind']}:v));setSaved(false)}}><option value="video">视频</option><option value="audio">音频</option></select></label>
@@ -130,10 +131,10 @@ export function ContinuityPanel({projectId, shot, previous, request, onSaved, on
         max={frame?frame.frame_count-1:undefined} value={frameNumber} placeholder="留空选择最后一帧"
         onChange={e=>{setFrameNumber(e.target.value);setSaved(false)}} disabled={working}/></label>
       <button className="secondary" disabled={working} onClick={prepare}>{working?<LoaderCircle className="spin" size={16}/>:null}提取并预览参考帧</button>
-      <small>改帧号后需重新提取。提取只处理本地素材，不调用视频模型；保存首帧配置会同时设置上一镜头的拼接出点。</small>
+      <small>改帧号后需重新提取。提取不调用视频模型；保存首帧配置会同时设置上一镜头的拼接出点。</small>
     </div>:firstMode&&<p className="muted">没有已完成的上一镜头时，可上传首帧。</p>}
     {firstMode&&frame&&<div className="reference-frame">
-      <img src={`/api/assets/${frame.asset_id}`} alt={frame.origin==='uploaded'?'上传的首帧':'选定的上一镜头结束帧'}/>
+      <MediaImage assetId={frame.asset_id} alt={frame.origin==='uploaded'?'上传的首帧':'选定的上一镜头结束帧'}/>
       <div><strong>{frame.origin==='uploaded'?`上传图片 · ${frame.width} × ${frame.height}`:`参考帧 ${frame.frame_index}`}</strong>{frame.origin!=='uploaded'&&<><p>时间 {frame.time.toFixed(3)} 秒 · 共 {frame.frame_count} 帧</p>
         <p>前镜头保留到 {(frame.out_frame_exclusive/24).toFixed(3)} 秒</p></>}
         <BackupStatus assetId={frame.asset_id} request={request}/>
@@ -141,8 +142,8 @@ export function ContinuityPanel({projectId, shot, previous, request, onSaved, on
       </div>
     </div>}
     {firstMode&&frame&&frame.origin!=='uploaded'&&<div className="boundary-preview">
-      <div><span>上一镜头（按出点结束）</span><video ref={firstVideo} src={`/api/assets/${frame.asset_id}/source-preview`} controls preload="auto"/></div>
-      <div><span>当前镜头（已有版本）</span>{shot.asset_id?<video ref={secondVideo} src={`/api/assets/${shot.asset_id}`} controls preload="auto"/>:<p className="muted">生成后可比较开头画面</p>}</div>
+      <div><span>上一镜头（按出点结束）</span><MediaVideo ref={firstVideo} assetId={frame.asset_id} preview controls preload="auto"/></div>
+      <div><span>当前镜头（已有版本）</span>{shot.asset_id?<MediaVideo ref={secondVideo} assetId={shot.asset_id} controls preload="auto"/>:<p className="muted">生成后可比较开头画面</p>}</div>
       <button className="secondary" disabled={!shot.asset_id||working} onClick={previewing?stopPreview:preview}><Play size={15}/>{previewing?'停止预览':'播放切换附近'}</button>
       <small>此处顺序播放前段结尾和后段开头供人工比较，浏览器切换可能有加载间隔。最终成片按保存的出点硬切。</small>
     </div>}

@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import func, or_, select, text
@@ -16,7 +16,7 @@ from .config import COOKIE_SECURE, ark_key, models, secret, model_catalog
 from .db import Asset, Job, Project, Session, Shot, migrate, now, uid
 from .job_policy import SCRIPT_MAX_RETRIES, SCRIPT_TIMEOUT_SECONDS, script_deadline
 from .media import path_for, reference_frame, SIZES
-from .storage import backup_data, settings as storage_settings
+from .storage import access_data, backup_data, local_asset, media_ready, settings as storage_settings
 from .db import AssetBackup
 from .continuity import generation_config, needs_generation, reference_current, reference_snapshot, references_snapshot
 from .schemas import GenerationInput, ImageUpload, ProjectInput, RecoveryInput, ReferenceFrameInput, Script, ShotSpec
@@ -92,7 +92,7 @@ def login(body: Login, request: Request, response: Response):
         raise HTTPException(401, "密码不正确")
     csrf = secrets.token_urlsafe(32)
     response.set_cookie("session", serializer().dumps({"csrf": csrf}), httponly=True,
-                        secure=COOKIE_SECURE, samesite="strict", max_age=86400)
+                        secure=COOKIE_SECURE or request.url.scheme == "https", samesite="strict", max_age=86400)
     return {"csrf": csrf}
 
 
@@ -118,7 +118,7 @@ def health():
 def configuration():
     config = models()
     return {"script_model": config["script_model_id"], "video_model": config["video_model_id"],
-            "provider": "方舟 · 真实模型接口", "storage": "本地持久化",
+            "provider": "方舟 · 真实模型接口", "storage": "私有 TOS" if storage_settings() else "本地持久化",
             "model_catalog": model_catalog(), "ratios": list(SIZES),
             "key_configured": bool(ark_key())}
 
@@ -211,6 +211,7 @@ def get_project(project_id: str):
             "id", "name", "brief", "style", "characters", "duration", "ratio", "script_model", "video_model", "script", "export_asset", "archived")}
         data["video_settings"] = video_settings(project)
         data["export_backup"] = backup_data(db, project.export_asset)
+        data["export_ready"] = media_ready(db, project.export_asset)
         active_shots = {j.shot_id: j.status for j in db.scalars(
             select(Job).where(Job.project_id == project_id, Job.status.in_(ACTIVE)).order_by(Job.created_at))}
         data["shots"] = []
@@ -220,6 +221,7 @@ def get_project(project_id: str):
                 "id": s.id, "position": s.position, "spec": s.spec,
                 "status": active_shots.get(s.id, s.status), "asset_id": s.asset_id,
                 "backup": backup_data(db, s.asset_id),
+                "media_ready": media_ready(db, s.asset_id),
                 "generation_config": generation_config(s), "edit_config": s.edit_config,
                 "reference_stale": bool(s.generation_config.get("mode") in ("first_frame", "first_last_frame") and
                                         (not ref or not reference_current(db, ref) or not reference_ratio_matches(ref, project.ratio))),
@@ -297,7 +299,7 @@ def prepare_reference(project_id: str, shot_id: str, body: ReferenceFrameInput):
             raise HTTPException(409, "上一镜头须先生成完成")
         relative = f"{project_id}/references/{uid()}/frame.png"
         try:
-            metadata, canonical = reference_frame(path_for(asset.path), path_for(relative), project.ratio, body.frame_index)
+            metadata, canonical = reference_frame(local_asset(db, asset), path_for(relative), project.ratio, body.frame_index)
         except (ValueError, OSError, KeyError):
             raise HTTPException(422, "选帧失败，请检查帧号、素材和 FFmpeg")
         metadata.update(source_shot_id=source.id, source_asset_id=asset.id,
@@ -463,6 +465,8 @@ def composition(project_id: str):
         shots = list(db.scalars(select(Shot).where(Shot.project_id == project_id).order_by(Shot.position)))
         if not shots or any(not s.asset_id or s.status != "succeeded" or needs_generation(db, s, project) for s in shots):
             raise HTTPException(409, "所有镜头完成后才能拼接")
+        if any(not media_ready(db, s.asset_id) for s in shots):
+            raise HTTPException(409, "请等待所有镜头上传完成；上传失败可单独重试")
         for shot in shots:
             try:
                 references_snapshot(db, shot, project.ratio)
@@ -569,12 +573,36 @@ def recover(job_id: str, body: RecoveryInput):
         return job_data(job)
 
 
+def media_access(db, asset, download=False, preview=False):
+    try:
+        return access_data(db, asset, download, preview)
+    except FileNotFoundError:
+        raise HTTPException(404, "素材不存在")
+    except Exception:
+        # 签名错误与模型生成无关，异常文本可能含凭证，不能直接返回。
+        raise HTTPException(503, "素材访问地址暂不可用，请稍后刷新或检查 TOS 配置") from None
+
+
+@app.get("/api/assets/{asset_id}/access", dependencies=[Depends(authenticated)])
+def asset_access(asset_id: str, download: bool = False, preview: bool = False):
+    with Session() as db:
+        asset = db.get(Asset, asset_id)
+        if not asset or (preview and (asset.kind != "image" or not asset.metadata_json.get("source_preview_path"))):
+            raise HTTPException(404, "素材不存在")
+        return media_access(db, asset, download, preview)
+
+
 @app.get("/api/assets/{asset_id}", dependencies=[Depends(authenticated)])
 def asset(asset_id: str, download: bool = False):
     with Session() as db:
         asset = db.get(Asset, asset_id)
         if not asset:
             raise HTTPException(404, "素材不存在")
+        if storage_settings():
+            access = media_access(db, asset, download)
+            if not access["url"]:
+                raise HTTPException(409, "素材尚未上传完成，请稍后刷新")
+            return RedirectResponse(access["url"], status_code=307)
         path = path_for(asset.path)
         if not path.is_file():
             raise HTTPException(404, "素材文件已丢失")
@@ -590,6 +618,11 @@ def source_preview(asset_id: str):
         reference = db.get(Asset, asset_id)
         if not reference or reference.kind != "image" or not reference.metadata_json.get("source_preview_path"):
             raise HTTPException(404, "参考帧预览不存在")
+        if storage_settings():
+            access = media_access(db, reference, preview=True)
+            if not access["url"]:
+                raise HTTPException(409, "预览尚未上传完成，请稍后刷新")
+            return RedirectResponse(access["url"], status_code=307)
         path = path_for(reference.metadata_json["source_preview_path"])
         if not path.is_file():
             raise HTTPException(404, "预览素材丢失，请重新选帧")
@@ -603,7 +636,8 @@ def asset_info(asset_id: str):
         if not asset:
             raise HTTPException(404, "素材不存在")
         return {"asset_id": asset.id, "kind": asset.kind, "duration": asset.duration,
-                **asset.metadata_json, "backup": backup_data(db, asset.id)}
+                **asset.metadata_json, "backup": backup_data(db, asset.id),
+                "media_ready": media_ready(db, asset.id)}
 
 
 @app.post("/api/assets/{asset_id}/backup/retry", dependencies=[Depends(authenticated)])

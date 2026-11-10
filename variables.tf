@@ -223,6 +223,16 @@ variable "video_model_id" {
   default     = "doubao-seedance-2-0-260128"
 }
 
+variable "media_url_ttl_seconds" {
+  description = "素材签名地址有效期（秒）；实例角色凭证剩余有效期不足时会自动缩短。"
+  type        = number
+  default     = 900
+  validation {
+    condition     = var.media_url_ttl_seconds >= 60 && var.media_url_ttl_seconds <= 3600 && floor(var.media_url_ttl_seconds) == var.media_url_ttl_seconds
+    error_message = "素材签名地址有效期须为 60 到 3600 之间的整数。"
+  }
+}
+
 variable "application_compose_path" {
   description = "Removed cloud Compose mode. Leave null; cloud deployment uses native services."
   type        = string

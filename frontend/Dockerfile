@@ -5,6 +5,7 @@ RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 FROM nginx:1.28.0-alpine
-COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
+ENV MEDIA_ORIGIN=""
+COPY frontend/nginx.conf /etc/nginx/templates/default.conf.template
 COPY --from=build /web/dist /usr/share/nginx/html
 EXPOSE 8080

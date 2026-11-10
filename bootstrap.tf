@@ -21,11 +21,12 @@ locals {
     }
     storage = {
       auto_upload       = true
-      backend           = "local_with_tos_backup"
+      backend           = "tos"
       bucket            = volcenginecc_tos_bucket.assets.name
       region            = var.region
       intranet_endpoint = volcenginecc_tos_bucket.assets.intranet_endpoint
       extranet_endpoint = volcenginecc_tos_bucket.assets.extranet_endpoint
+      url_ttl_seconds   = var.media_url_ttl_seconds
     }
     models = {
       ark_base_url     = var.ark_base_url

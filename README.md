@@ -21,7 +21,7 @@ This solution brings project settings, structured storyboards, model tasks, refe
 - **Application and database**: a React/TypeScript frontend, FastAPI API, and separate Python Worker. PostgreSQL 16 runs on ECS and stores projects, shots, tasks, leases, and the backup queue. API and database ports are not exposed publicly.
 - **Models**: Doubao 2.1 generates scripts and Seedance 2.0 generates videos by default. Projects can select other enabled models or inference endpoints. The template configures model IDs but does not create Ark endpoints or API keys.
 - **Delivery**: Terraform encodes source code and the prebuilt frontend into 16 KiB TOS chunks, then publishes a verification manifest after all chunks are uploaded. ECS downloads, combines, and verifies the content before installing native services managed by systemd.
-- **Assets and final films**: media is saved locally on ECS first; FFmpeg extracts frames and assembles films. A separate Worker queue automatically backs up videos, final films, and reference images to a private TOS bucket.
+- **素材与成片**：私有 TOS 保存最终素材，浏览器通过短期签名地址直连访问。ECS 本地文件用于暂存、选帧和拼接，独立上传队列负责持久化，缺失缓存可从 TOS 恢复。
 
 ```mermaid
 flowchart LR
@@ -35,11 +35,14 @@ flowchart LR
       Worker --> FFmpeg["FFmpeg / Frame extraction and hard cuts"]
       FFmpeg --> Media["Local media directory"]
       Worker --> Media
-      API -->|"Preview / Download"| Media
+      API -->|"内部处理缓存"| Media
     end
   end
   Worker <-->|"HTTPS scripts / Async video tasks"| Ark["Volcengine Ark<br/>Doubao / Seedance"]
-  Media -->|"Automatic Worker backup<br/>Temporary ECS role credentials"| TOS["Private TOS media bucket"]
+  Media -->|"独立上传队列 / 实例角色"| TOS["私有 TOS 素材桶"]
+  API -->|"返回短期签名地址"| User
+  User -->|"直连播放 / 下载"| TOS
+  TOS -->|"处理时恢复缺失缓存"| Media
   Source["TOS source chunks and manifest<br/>Public-read objects / SHA256 verification"] -->|"HTTPS download"| ECS
 ```
 
@@ -425,13 +428,17 @@ The media bucket in the current `main.tf` has `prevent_destroy = false`, and the
 
 ### 4.4 Asset Backup and Operational Checks
 
-Cloud deployment enables `storage.auto_upload=true` by default. The destination comes from `bucket_name`, not a hard-coded bucket. Backups cover new and historical archived shot videos, final films, model ending frames, extracted reference frames, uploaded images, and frame-selection preview videos.
+云端部署默认启用 `storage.auto_upload=true`，私有 TOS 是素材的最终存储。桶名来自 `bucket_name`。上传范围包括新旧镜头视频、成片、模型尾帧、提取的参考帧、上传图片和选帧预览视频。
 
-Objects use the prefix `media/<project_id>/<asset_id>/`, private ACLs, AES256 encryption, and SDK CRC checks. After upload, HEAD checks verify size and SHA256 metadata. The backup queue is independent of model tasks; failed uploads do not regenerate videos. Retry delays increase from 30 seconds to a maximum of 30 minutes, and interrupted Workers can resume after lease expiration. The interface displays backup status and offers “重试上传” (Retry Upload).
+对象使用 `media/<project_id>/<asset_id>/` 前缀、私有 ACL、AES256 加密和 SDK CRC 校验，上传后通过 HEAD 校验大小与 SHA256 元数据。上传队列与模型任务独立；失败只重试上传，不重新生成视频。重试间隔从 30 秒递增到最多 30 分钟，Worker 中断后可在租约到期后恢复。界面分别显示“已生成”和上传状态，上传成功后才计入“已就绪”并允许拼接、下载。
 
-ECS obtains temporary credentials through its instance role and prefers the internal TOS HTTPS endpoint. For real uploads from a development machine, configure the bucket, region, endpoint, and backend credential files `TOS_ACCESS_KEY_FILE` and `TOS_SECRET_KEY_FILE`; temporary credentials also require `TOS_SESSION_TOKEN_FILE`.
+ECS 通过实例角色获取临时凭证，上传及处理缓存恢复优先使用 TOS 内网 HTTPS 地址。浏览器登录后向 `/api/assets/<asset_id>/access` 获取签名公网地址，再直连 TOS 播放图片、视频或下载；媒体内容不经过后端代理。选帧预览使用 `preview=true`，下载使用 `download=true`。原素材接口保留为签名地址重定向，未登录不能取签名。
 
-Local files remain available for playback, frame selection, and assembly. Automatic restoration of missing local media from TOS is not implemented. Back up the database, secrets, and runtime configuration separately. ECS data locations:
+签名地址默认有效 900 秒，可通过 `media_url_ttl_seconds` 配置为 60–3600 秒；实际有效期会留出角色凭证到期前的安全余量。前端在地址到期前自动续期，恢复页面可见时也会刷新，续期视频保留播放位置。签名只在响应和浏览器内存中使用，不写入数据库或日志。使用自备临时密钥文件时，管理员仍须及时更新密钥文件。
+
+ECS 本地目录用于生成结果暂存、选帧和 FFmpeg 拼接。内部处理发现缓存缺失时，从已上传的 TOS 对象恢复并校验大小、SHA256；正常播放不读取本地缓存。未启用 TOS 的本地开发继续使用本地文件。开发机启用 TOS 时需配置桶名、地域、内外网地址及后端密钥文件 `TOS_ACCESS_KEY_FILE`、`TOS_SECRET_KEY_FILE`，临时凭证还需 `TOS_SESSION_TOKEN_FILE`。容器部署须将 `MEDIA_ORIGIN` 设置为该桶的完整公网来源（如 `https://<bucket>.tos-cn-beijing.volces.com`），用于网页图片和视频访问策略；原生安装会按运行配置自动设置。
+
+数据库、密钥及运行配置仍需单独备份。ECS 数据目录：
 
 | Data | Path |
 | --- | --- |

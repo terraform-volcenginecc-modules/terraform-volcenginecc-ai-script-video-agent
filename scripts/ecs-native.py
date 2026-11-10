@@ -2,11 +2,13 @@
 """Install an immutable release as native services on Ubuntu 24.04."""
 import os
 import importlib.util
+import json
 from pathlib import Path
 import re
 import subprocess
 import time
 import urllib.request
+from urllib.parse import urlsplit
 
 ROOT = Path("/opt/ai-animation")
 SYSTEMD = Path("/etc/systemd/system")
@@ -116,6 +118,19 @@ def install(release):
     nginx = nginx.replace("listen 8080;", "listen 127.0.0.1:8080;")
     nginx = nginx.replace("/usr/share/nginx/html", str(release / "frontend/dist"))
     nginx = nginx.replace("http://api:8000", "http://127.0.0.1:8000")
+    storage = json.loads((ROOT / "config/runtime.json").read_text()).get("storage", {})
+    media_origin = ""
+    if storage.get("auto_upload"):
+        endpoint = storage.get("extranet_endpoint") or f"tos-{storage.get('region')}.volces.com"
+        endpoint = urlsplit(endpoint if "://" in endpoint else "https://" + endpoint)
+        bucket = storage.get("bucket", "")
+        hostname = endpoint.netloc.removeprefix(bucket + ".")
+        if (endpoint.scheme != "https" or not re.fullmatch(r"tos(-s3)?-[a-z0-9-]+\.volces\.com", hostname)
+                or endpoint.path not in ("", "/") or endpoint.query or endpoint.fragment
+                or not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,61}[a-z0-9]", bucket)):
+            raise ValueError("TOS 公网地址或桶名无效，无法配置素材访问策略")
+        media_origin = f"https://{bucket}.{hostname}"
+    nginx = nginx.replace("${MEDIA_ORIGIN}", media_origin)
     write(NGINX / "sites-available/ai-animation", nginx)
     # Ubuntu's default port-80 welcome site must not expose a second web entry.
     (NGINX / "sites-enabled/default").unlink(missing_ok=True)

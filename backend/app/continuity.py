@@ -1,6 +1,7 @@
 """Stable reference bindings shared by API submission and task recovery."""
 from .db import Asset, Shot
-from .media import digest, image_info, path_for
+from .media import digest, image_info
+from .storage import local_asset
 
 
 def generation_config(shot):
@@ -26,7 +27,7 @@ def reference_snapshot(db, shot, ratio):
         raise ValueError("参考帧不存在或不属于当前项目")
     if not reference_current(db, reference):
         raise ValueError("上一镜头或剪辑出点已变化，请重新选帧确认")
-    info = image_info(path_for(reference.path))
+    info = image_info(local_asset(db, reference))
     if info["sha256"] != reference.metadata_json["sha256"]:
         raise ValueError("参考帧内容已变化，请重新选帧")
     from .media import SIZES
@@ -50,7 +51,7 @@ def references_snapshot(db, shot, ratio):
         asset = db.get(Asset, asset_id)
         if not asset or asset.project_id != shot.project_id or asset.kind != "image":
             raise ValueError("参考图片不存在或不属于当前项目")
-        info = image_info(path_for(asset.path))
+        info = image_info(local_asset(db, asset))
         if info["sha256"] != asset.metadata_json.get("sha256"):
             raise ValueError("参考图片内容已变化")
         role = "last_frame" if asset_id == config.get("last_frame_asset_id") else "reference_image"
@@ -84,6 +85,11 @@ def needs_generation(db, shot, project=None):
 
 def validate_reference_file(reference):
     if reference:
-        path = path_for(reference["path"])
+        from .db import Session
+        with Session() as db:
+            asset = db.get(Asset, reference["asset_id"])
+            if not asset or asset.path != reference["path"]:
+                raise ValueError("任务参考素材已变化")
+            path = local_asset(db, asset)
         if not path.is_file() or digest(path) != reference["sha256"]:
             raise ValueError("任务参考帧丢失或内容变化，请重新确认参考素材")
