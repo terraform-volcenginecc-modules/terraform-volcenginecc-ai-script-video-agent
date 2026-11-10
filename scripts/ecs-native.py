@@ -105,7 +105,7 @@ def install(release):
         path.chmod(0o755 if path.is_dir() else 0o644)
     python = release / ".venv/bin/python"
     marker = release / ".native-installed"
-    spec = importlib.util.spec_from_file_location("comfyui_installer", release / "scripts/安装ComfyUI.py")
+    spec = importlib.util.spec_from_file_location("comfyui_installer", release / "scripts/install-comfyui.py")
     installer = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(installer)
     if not marker.exists():
@@ -141,7 +141,7 @@ def install(release):
         run("runuser", "-u", "postgres", "--", "createdb", "-O", "animation", "animation")
     for kind in ("api", "worker", "comfyui"):
         write(SYSTEMD / f"ai-animation-{kind}.service", service(release, kind))
-    nginx = (release / "frontend/nginx.conf").read_text()
+    nginx = (release / "frontend/nginx/studio.conf").read_text()
     nginx = nginx.replace("listen 8080;", "listen 127.0.0.1:8080;")
     nginx = nginx.replace("/usr/share/nginx/html", str(release / "frontend"))
     nginx = nginx.replace("http://api:8000", "http://127.0.0.1:8000")
@@ -168,7 +168,7 @@ def install(release):
     spec = importlib.util.spec_from_file_location("ecs_public_web", release / "scripts/ecs-public-web.py")
     public_web = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(public_web)
-    public_web.configure(release / "frontend/nginx-public.conf", NGINX)
+    public_web.configure(release / "frontend/nginx/public.conf", NGINX)
     run("nginx", "-t")
     run("systemctl", "daemon-reload")
     run("systemctl", "enable", "ai-animation-api.service", "ai-animation-worker.service",

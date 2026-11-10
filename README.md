@@ -90,18 +90,17 @@ Both source and media buckets have private bucket ACLs. Only automatically deliv
 .
 ├── backend/
 │   ├── app/                     # API, Worker, model adapters, media processing and backup
-│   ├── comfyui扩展.py             # Official custom nodes and login protection
+│   ├── comfyui_extension.py              # Official custom nodes and login protection
 │   └── requirements.txt
 ├── frontend/
-│   ├── comfyui扩展/              # Official ComfyUI sidebar extension
-│   ├── 登录.html
-│   ├── 登录.js
-│   ├── nginx.conf
-│   └── nginx-public.conf
+│   ├── comfyui-extension/    # Official ComfyUI sidebar extension
+│   ├── login/
+│   └── nginx/
 ├── scripts/
 │   ├── package-release.py       # Create a complete release bundle
-│   ├── 本地部署.py               # Credential file injection and complete Terraform apply
-│   ├── 安装ComfyUI.py            # Verify official source and install CPU dependencies and extensions
+│   ├── deploy-local.py          # Credential file injection and complete Terraform apply
+│   ├── install-comfyui.py       # Verify official source and install CPU dependencies and extensions
+│   ├── comfyui-release.json
 │   ├── comfyui-requirements.txt # Pinned studio Python dependencies
 │   ├── ecs-bootstrap.sh         # ECS installation entry point
 │   ├── ecs-deploy.py            # Download, combine and verify source
@@ -117,8 +116,7 @@ Both source and media buckets have private bucket ACLs. Only automatically deliv
 ├── terraform.tfvars             # Local deployment parameters
 ├── compose.yaml                 # Optional local container setup
 ├── compose.dev.yaml
-├── 开源组件.json                 # Official version, download URL and SHA256
-├── docs/视频适配说明.md           # Optional remote GPU video service configuration
+├── docs/comfyui-video-provider.md # Optional remote GPU video service configuration
 ├── tests/                       # Local regression tests and fixtures
 ├── README.md                    # English documentation
 └── README.zh-CN.md               # Chinese documentation
@@ -126,7 +124,7 @@ Both source and media buckets have private bucket ACLs. Only automatically deliv
 
 This release includes custom nodes, a login page, a pinned component manifest, and `terraform.tfvars`. Replace environment parameters before deployment. The official frontend is installed with ComfyUI without an npm build. Parameter files, state, plans, secrets, runtime configuration, database files, and media are excluded from source delivery.
 
-All Terraform resources are defined in the root module. The bootstrap chain is `bootstrap.tf` → `scripts/ecs-bootstrap.sh` → `scripts/ecs-deploy.py` → `scripts/ecs-native.py`. Official ComfyUI is downloaded and installed separately. This project maintains business adapters in `frontend/comfyui扩展/`, `backend/comfyui扩展.py`, and `backend/app/`.
+All Terraform resources are defined in the root module. The bootstrap chain is `bootstrap.tf` → `scripts/ecs-bootstrap.sh` → `scripts/ecs-deploy.py` → `scripts/ecs-native.py`. Official ComfyUI is downloaded and installed separately. This project maintains business adapters in `frontend/comfyui-extension/`, `backend/comfyui_extension.py`, and `backend/app/`.
 
 ### 3.3 Key Code Examples
 
@@ -174,7 +172,7 @@ The studio keeps the pinned official frontend and node runtime. The bundled Comf
 
 Open the [InfraManager console](https://console.volcengine.com/iac), go to **Template Management > Public Templates**, and search for “AI Script and Video Creation Studio”.
 
-This search path applies after publication, which this document does not confirm. Custom imports must preserve root Terraform files, `开源组件.json`, installers, backend source, login files, Nginx configuration, and `frontend/comfyui扩展/`. Importing only `.tf` files cannot install the application.
+This search path applies after publication, which this document does not confirm. Custom imports must preserve root Terraform files, `scripts/comfyui-release.json`, installers, backend source, login files, Nginx configuration, and `frontend/comfyui-extension/`. Importing only `.tf` files cannot install the application.
 
 On a release machine with Python 3, run:
 
@@ -267,7 +265,7 @@ Run the following Terraform commands from this project's root directory on macOS
 With an existing AK-mode configuration in `~/.volcengine/config.json`, the local deployment script can inject credential files and run init, validate, a complete plan, and one apply. Password mode also requires an ECS password file:
 
 ```bash
-python3 scripts/本地部署.py \
+python3 scripts/deploy-local.py \
   --ark-key-file "/absolute/path/to/ark-key-file" \
   --ecs-password-file "/absolute/path/to/ecs-password-file"
 ```
@@ -342,7 +340,7 @@ Review the local `terraform.tfvars` and update values for the target account. Wh
 
 Login credentials are mutually exclusive: provide only the key-pair name in key-pair mode and only the password in password mode. Supply `ark_api_key` through a sensitive platform input or `TF_VAR_ark_api_key`. Automatically loaded `terraform.tfvars` values take precedence over `TF_VAR_*`; do not assign a variable in the parameter file when injecting the same variable through the environment.
 
-CPU ECS runs the official ComfyUI interface and API nodes; Ark performs default model computation. Deployment and usage are described in this section. `video_provider = "comfyui"` selects an additional remote GPU video service whose real workflow contract is documented in [the provider guide](docs/视频适配说明.md).
+CPU ECS runs the official ComfyUI interface and API nodes; Ark performs default model computation. Deployment and usage are described in this section. `video_provider = "comfyui"` selects an additional remote GPU video service whose real workflow contract is documented in [the provider guide](docs/comfyui-video-provider.md).
 
 #### 4.2.2 Scenario-based Deployment Examples
 

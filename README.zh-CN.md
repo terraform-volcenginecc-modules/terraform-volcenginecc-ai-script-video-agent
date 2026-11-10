@@ -90,18 +90,17 @@ flowchart TB
 .
 ├── backend/
 │   ├── app/                     # API、Worker、模型适配、媒体处理与备份
-│   ├── comfyui扩展.py             # 官方自定义节点与登录保护
+│   ├── comfyui_extension.py              # 官方自定义节点与登录保护
 │   └── requirements.txt
 ├── frontend/
-│   ├── comfyui扩展/              # 官方 ComfyUI 侧栏扩展
-│   ├── 登录.html
-│   ├── 登录.js
-│   ├── nginx.conf
-│   └── nginx-public.conf
+│   ├── comfyui-extension/    # 官方 ComfyUI 侧栏扩展
+│   ├── login/
+│   └── nginx/
 ├── scripts/
 │   ├── package-release.py       # 生成完整交付包
-│   ├── 本地部署.py               # 凭据文件注入与完整 Terraform apply
-│   ├── 安装ComfyUI.py            # 官方源码校验、CPU 依赖与扩展安装
+│   ├── deploy-local.py          # 凭据文件注入与完整 Terraform apply
+│   ├── install-comfyui.py       # 官方源码校验、CPU 依赖与扩展安装
+│   ├── comfyui-release.json
 │   ├── comfyui-requirements.txt # 工作室的固定 Python 依赖
 │   ├── ecs-bootstrap.sh         # ECS 安装入口
 │   ├── ecs-deploy.py            # 下载、合并和校验源码
@@ -117,8 +116,7 @@ flowchart TB
 ├── terraform.tfvars             # 本地部署参数
 ├── compose.yaml                 # 可选本地容器运行
 ├── compose.dev.yaml
-├── 开源组件.json                 # 官方版本、下载地址与 SHA256
-├── docs/视频适配说明.md           # 可选远程 GPU 视频服务配置
+├── docs/comfyui-video-provider.md # 可选远程 GPU 视频服务配置
 ├── tests/                       # 本地回归测试与假服务数据
 ├── README.md                    # 英文说明
 └── README.zh-CN.md               # 中文说明
@@ -126,7 +124,7 @@ flowchart TB
 
 本发布目录包含业务扩展、登录入口、固定开源组件清单和 `terraform.tfvars`；部署前将环境参数替换为目标账号的配置。官方前端由 ComfyUI 安装依赖提供，无需 npm 构建。`terraform.tfvars` 不进入自动源码包；State、Plan、`.env`、`secrets/`、`config/runtime.json`、`data/` 和 `work/` 同样不进入源码包。部署与运维步骤见第 4 节。
 
-所有 Terraform 资源在根模块定义。启动链为 `bootstrap.tf` → `scripts/ecs-bootstrap.sh` → `scripts/ecs-deploy.py` → `scripts/ecs-native.py`。官方 ComfyUI 单独下载并安装；本工程维护 `frontend/comfyui扩展/`、`backend/comfyui扩展.py` 和 `backend/app/` 中的业务适配代码。
+所有 Terraform 资源在根模块定义。启动链为 `bootstrap.tf` → `scripts/ecs-bootstrap.sh` → `scripts/ecs-deploy.py` → `scripts/ecs-native.py`。官方 ComfyUI 单独下载并安装；本工程维护 `frontend/comfyui-extension/`、`backend/comfyui_extension.py` 和 `backend/app/` 中的业务适配代码。
 
 ### 3.3 核心代码示例
 
@@ -174,7 +172,7 @@ InfraManager 是火山引擎提供的 Terraform 托管工作台，更多产品�
 
 打开 [InfraManager 控制台](https://console.volcengine.com/iac)，进入 **模板管理 > 公开模板**，搜索“AI 剧本与视频创作工作室”。
 
-上述搜索入口适用于模板已公开上架的情况，本文未确认上架状态。搜索不到时，按平台支持的自定义模板导入方式上传完整工程，保留根目录 Terraform、`开源组件.json`、`scripts/`、后端源码、登录文件及 `frontend/comfyui扩展/` 的相对目录结构。仅导入 `.tf` 文件无法完成应用安装。
+上述搜索入口适用于模板已公开上架的情况，本文未确认上架状态。搜索不到时，按平台支持的自定义模板导入方式上传完整工程，保留根目录 Terraform、`scripts/comfyui-release.json`、`scripts/`、后端源码、登录文件及 `frontend/comfyui-extension/` 的相对目录结构。仅导入 `.tf` 文件无法完成应用安装。
 
 发布者在安装 Python 3 的机器上执行：
 
@@ -267,7 +265,7 @@ sudo cat /opt/ai-animation/secrets/owner_password
 已有 `~/.volcengine/config.json` AK 模式配置时，也可使用本地部署脚本直接注入凭据文件，执行 init、validate、完整 plan 和一次 apply。密码模式同时提供 ECS 密码文件：
 
 ```bash
-python3 scripts/本地部署.py \
+python3 scripts/deploy-local.py \
   --ark-key-file "/本机方舟密钥文件的绝对路径" \
   --ecs-password-file "/本机ECS密码文件的绝对路径"
 ```
@@ -342,7 +340,7 @@ export TF_VAR_ecs_password="<strong-password>"
 
 两种登录凭据互斥：密钥模式只填写密钥对名称，密码模式只填写密码。`ark_api_key` 必须通过平台敏感参数或 `TF_VAR_ark_api_key` 提供。自动加载的 `terraform.tfvars` 优先于 `TF_VAR_*`；通过环境变量注入参数时，不要在参数文件中为同名变量赋值。
 
-CPU ECS 运行官方 ComfyUI 界面和 API 节点，模型计算默认使用 Ark，部署和操作见本节。`video_provider = "comfyui"` 额外选择远程 GPU 视频服务，其真实工作流配置见 [视频适配说明](docs/视频适配说明.md)。
+CPU ECS 运行官方 ComfyUI 界面和 API 节点，模型计算默认使用 Ark，部署和操作见本节。`video_provider = "comfyui"` 额外选择远程 GPU 视频服务，其真实工作流配置见 [视频适配说明](docs/comfyui-video-provider.md)。
 
 #### 4.2.2 场景化部署示例
 

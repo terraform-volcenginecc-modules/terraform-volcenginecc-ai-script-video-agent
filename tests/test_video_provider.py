@@ -20,10 +20,10 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.types import TypeDecorator
 
 from app import api, config, db, media, provider, storage, worker
-from app.comfyui import ComfyUI
+from app.comfyui_provider import ComfyUI
 from app.comfyui_config import validate_config, validate_request
 from app.provider import ProviderError
-from 适配测试数据 import 服务配置, 视频快照
+from video_provider_fixtures import 服务配置, 视频快照
 
 
 class 时间类型(TypeDecorator):

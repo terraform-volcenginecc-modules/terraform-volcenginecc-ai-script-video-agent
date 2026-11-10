@@ -697,4 +697,4 @@ def export_script(project_id: str):
 
 
 # 官方 ComfyUI 的 HTTP 业务扩展入口；保持与原业务接口共用认证和事务。
-from . import native  # noqa: E402,F401
+from . import studio  # noqa: E402,F401

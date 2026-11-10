@@ -5,12 +5,12 @@ locals {
       "backend/app/${name}" => filebase64("${path.module}/backend/app/${name}")
       if endswith(name, ".py") && !can(regex("(^|/)(__pycache__|\\.venv)(/|$)", name))
     },
-    { for name in fileset("${path.module}/frontend/comfyui扩展", "**") :
-      "frontend/comfyui扩展/${name}" => filebase64("${path.module}/frontend/comfyui扩展/${name}")
+    { for name in fileset("${path.module}/frontend/comfyui-extension", "**") :
+      "frontend/comfyui-extension/${name}" => filebase64("${path.module}/frontend/comfyui-extension/${name}")
     },
-    { for name in ["backend/requirements.txt", "backend/comfyui扩展.py", "frontend/登录.html",
-      "frontend/登录.js", "frontend/nginx.conf", "frontend/nginx-public.conf", "scripts/ecs-native.py",
-      "scripts/ecs-public-web.py", "scripts/安装ComfyUI.py", "scripts/comfyui-requirements.txt", "开源组件.json"] :
+    { for name in ["backend/requirements.txt", "backend/comfyui_extension.py", "frontend/login/index.html",
+      "frontend/login/login.js", "frontend/nginx/studio.conf", "frontend/nginx/public.conf", "scripts/ecs-native.py",
+      "scripts/ecs-public-web.py", "scripts/install-comfyui.py", "scripts/comfyui-requirements.txt", "scripts/comfyui-release.json"] :
       name => filebase64("${path.module}/${name}")
     }
   ))
@@ -72,7 +72,7 @@ resource "volcenginecc_tos_object" "source_parts" {
   tags                   = local.tags
   lifecycle {
     precondition {
-      condition     = fileexists("${path.module}/frontend/登录.html")
+      condition     = fileexists("${path.module}/frontend/login/index.html")
       error_message = "缺少 ComfyUI 登录入口文件。"
     }
     precondition {

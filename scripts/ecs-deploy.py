@@ -20,11 +20,19 @@ CHUNK_SIZE = 16 * 1024
 
 
 def validate_native_files(names):
-    for name in ("backend/app/api.py", "backend/app/worker.py", "backend/requirements.txt",
-                 "frontend/登录.html", "frontend/comfyui扩展/工作室.js",
-                 "backend/comfyui扩展.py", "开源组件.json", "scripts/安装ComfyUI.py",
-                 "frontend/nginx.conf", "scripts/ecs-native.py",
-                 "frontend/nginx-public.conf", "scripts/ecs-public-web.py"):
+    common = ("backend/app/api.py", "backend/app/worker.py", "backend/requirements.txt",
+              "scripts/ecs-native.py", "scripts/ecs-public-web.py")
+    if "scripts/安装ComfyUI.py" in names and "scripts/install-comfyui.py" not in names:
+        layout = ("frontend/登录.html", "frontend/comfyui扩展/工作室.js",
+                  "backend/comfyui扩展.py", "开源组件.json", "scripts/安装ComfyUI.py",
+                  "frontend/nginx.conf", "frontend/nginx-public.conf")
+    else:
+        layout = ("frontend/login/index.html", "frontend/login/login.js",
+                  "frontend/comfyui-extension/studio.js", "frontend/comfyui-extension/studio.css",
+                  "backend/comfyui_extension.py", "scripts/comfyui-release.json",
+                  "scripts/install-comfyui.py", "scripts/comfyui-requirements.txt",
+                  "frontend/nginx/studio.conf", "frontend/nginx/public.conf")
+    for name in (*common, *layout):
         if name not in names:
             raise ValueError(f"Required native release file missing: {name}")
 

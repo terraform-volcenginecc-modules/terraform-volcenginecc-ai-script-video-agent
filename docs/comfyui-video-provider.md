@@ -96,7 +96,7 @@ Terraform 参数：
 源码仓库的 `tests/` 目录保存假服务集成用例和数据。从工程根目录执行，需安装 `backend/requirements.txt`、FFmpeg 和 FFprobe：
 
 ```bash
-PYTHONPATH=backend PYTHONDONTWRITEBYTECODE=1 python tests/测试视频适配.py
+PYTHONPATH=backend PYTHONDONTWRITEBYTECODE=1 python tests/test_video_provider.py
 terraform fmt -check -recursive
 terraform validate
 ```

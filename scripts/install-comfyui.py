@@ -52,7 +52,7 @@ def download_source(component, archive):
 
 
 def install(release):
-    component = json.loads((release / "开源组件.json").read_text())["comfyui"]
+    component = json.loads((release / "scripts/comfyui-release.json").read_text())["comfyui"]
     target = release / "ComfyUI"
     if not target.is_dir():
         with TemporaryDirectory(prefix="comfyui-", dir=release) as staging:
@@ -83,8 +83,8 @@ def install(release):
         marker.touch()
     extension = target / "custom_nodes/ai_animation"
     extension.mkdir(exist_ok=True)
-    shutil.copy2(release / "backend/comfyui扩展.py", extension / "__init__.py")
-    shutil.copytree(release / "frontend/comfyui扩展", extension / "web", dirs_exist_ok=True)
+    shutil.copy2(release / "backend/comfyui_extension.py", extension / "__init__.py")
+    shutil.copytree(release / "frontend/comfyui-extension", extension / "web", dirs_exist_ok=True)
     return target
 
 

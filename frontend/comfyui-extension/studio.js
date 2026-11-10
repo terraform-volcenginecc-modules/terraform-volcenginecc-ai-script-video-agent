@@ -351,7 +351,7 @@ app.registerExtension({
     await session();
     const stylesheet = element("link", undefined, document.head);
     stylesheet.rel = "stylesheet";
-    stylesheet.href = new URL("./工作室.css", import.meta.url).href;
+    stylesheet.href = new URL("./studio.css", import.meta.url).href;
     app.extensionManager.registerSidebarTab({
       id: "volcengine-studio", icon: "pi pi-video", title: "视频工作室",
       tooltip: "火山视频工作室", type: "custom", render,

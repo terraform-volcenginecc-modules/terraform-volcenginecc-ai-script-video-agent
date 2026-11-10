@@ -2,11 +2,10 @@ FROM python:3.12.10-slim-bookworm
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /opt/ai-animation
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY 开源组件.json ./
-COPY scripts/安装ComfyUI.py scripts/comfyui-requirements.txt ./scripts/
-COPY backend/comfyui扩展.py ./backend/
-COPY frontend/comfyui扩展 ./frontend/comfyui扩展
-RUN python scripts/安装ComfyUI.py --release /opt/ai-animation
+COPY scripts/install-comfyui.py scripts/comfyui-requirements.txt scripts/comfyui-release.json ./scripts/
+COPY backend/comfyui_extension.py ./backend/
+COPY frontend/comfyui-extension ./frontend/comfyui-extension
+RUN python scripts/install-comfyui.py --release /opt/ai-animation
 WORKDIR /opt/ai-animation/ComfyUI
 ENV ANIMATION_BACKEND_URL=http://api:8000 OWNER_PASSWORD_FILE=/run/secrets/owner_password SESSION_KEY_FILE=/run/secrets/session_key
 CMD ["/opt/ai-animation/.comfyui-venv/bin/python", "main.py", "--cpu", "--listen", "0.0.0.0", "--port", "8188", "--disable-auto-launch", "--disable-all-custom-nodes", "--whitelist-custom-nodes", "ai_animation", "--disable-partner-nodes", "--user-directory", "/work/comfyui/user", "--input-directory", "/work/comfyui/input", "--output-directory", "/work/comfyui/output", "--temp-directory", "/work/comfyui/temp", "--database-url", "sqlite:////work/comfyui/comfyui.db"]

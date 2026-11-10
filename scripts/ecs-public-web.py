@@ -50,7 +50,7 @@ def configure(config_path, nginx_root=Path("/etc/nginx")):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path,
-                        default=Path(__file__).resolve().parents[1] / "frontend/nginx-public.conf")
+                        default=Path(__file__).resolve().parents[1] / "frontend/nginx/public.conf")
     args = parser.parse_args()
     configure(args.config)
     subprocess.run(["nginx", "-t"], check=True)

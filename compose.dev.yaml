@@ -11,7 +11,7 @@ services:
   comfyui:
     build:
       context: .
-      dockerfile: backend/ComfyUI.Dockerfile
+      dockerfile: backend/Dockerfile.comfyui
   web:
     build:
       context: .

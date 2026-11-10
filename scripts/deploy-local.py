@@ -26,8 +26,7 @@ def deploy(args):
     target.chmod(0o700)
     for path in ROOT.glob("*.tf"):
         shutil.copy2(path, target / path.name)
-    for name in ("terraform.tfvars", "开源组件.json"):
-        shutil.copy2(ROOT / name, target / name)
+    shutil.copy2(ROOT / "terraform.tfvars", target / "terraform.tfvars")
     for name in ("backend", "frontend", "scripts"):
         link = target / name
         if not link.exists():

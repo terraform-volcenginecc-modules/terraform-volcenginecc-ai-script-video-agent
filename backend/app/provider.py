@@ -35,7 +35,7 @@ def video_provider(snapshot):
     if name == "ark":
         return Ark()
     if name == "comfyui":
-        from .comfyui import ComfyUI
+        from .comfyui_provider import ComfyUI
         return ComfyUI(snapshot["comfyui"], snapshot.get("comfyui_job_url"))
     raise ProviderError("任务记录中的视频 Provider 无效")
 
