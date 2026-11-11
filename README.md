@@ -121,7 +121,7 @@ resource "volcenginecc_tos_object" "source" {
 
 Creation dependencies are `security group → time_sleep.eni_release_wait → ECS`; destruction runs in reverse, with a default 120-second delay to allow asynchronous NIC detachment. No creation delay is configured, and destruction does not invoke Python or shell commands. The wait resource must have been applied to state before a later destroy can execute it.
 
-Chunks use Terraform's default parallelism. Changing the source delivery mode adds or removes the corresponding source bucket, objects, and read policy; review the execution plan before deployment. Section 4 covers deployment and verification.
+Chunks use Terraform's default parallelism. Section 4 covers deployment and verification.
 
 ## 4. Usage
 
@@ -133,13 +133,15 @@ InfraManager is Volcengine's managed Terraform workspace. For more information, 
 
 #### 4.1.1 Prepare Permissions
 
+One Apply creates resources and automatically delivers source; ECS then downloads and installs the application on first boot. This template requires no additional Python, AK/SK or Cloud Assistant setup on the platform runner. Installation scripts and dependencies run inside ECS. Apply success confirms resource creation and source delivery; installation may still be running. Open the workspace after the application status becomes `ready`.
+
 The stack execution identity needs CloudControl access and permissions to manage and associate VPCs, subnets, security groups, ECS instances, disks, NICs, EIPs, TOS resources, and IAM roles/policies, including passing a role to ECS. The application uses the instance role created by the template to access specified buckets or objects; deployment and runtime identities serve different purposes.
 
 Prepare an Ubuntu 24.04 amd64 image, an available CPU ECS instance type, EIP and disk quotas, and a globally unique media bucket name in the target region. A starting capacity of 4 vCPU / 8 GiB is recommended; actual requirements depend on generation concurrency, video archiving, and FFmpeg load.
 
 Enable the selected Seedance video model in the [Volcengine Ark console](https://console.volcengine.com/ark) and create an API key authorized to invoke it. An Ark key differs from cloud account AK/SK credentials, model IDs, and `ep-...` endpoint IDs. Supply the required `ark_api_key` as a sensitive platform input. See section 3.1 for secret-file and state-storage details.
 
-On first boot, ECS installs dependencies from public sources. It downloads the ComfyUI source from GitHub, verifies its SHA-256, and retries or uses GitHub's direct archive URL if needed. CPU PyTorch uses the SJTU mirror with the official CPU index as fallback. Other Python packages use the Volcengine mirror with official PyPI as fallback. ECS also needs access to TOS, Ubuntu repositories, and Ark HTTPS APIs.
+On first boot, ECS installs dependencies from public sources. It downloads the ComfyUI source from GitHub, verifies its SHA-256, and retries or uses GitHub's direct archive URL if needed. CPU PyTorch uses the SJTU mirror with the official CPU index as fallback. Other Python packages try the Volcengine mirror, the Tsinghua mirror, then official PyPI. Each source has a 30-minute installation limit, with a 20-second network read timeout and cached downloads retained for automatic retries. ECS also needs access to TOS, Ubuntu repositories, and Ark HTTPS APIs.
 
 The studio keeps the pinned official frontend and node runtime. The bundled ComfyUI sample workflows, sample media, and embedded node docs are omitted. The sample workflow is installed with the custom node and appears in the official template library. No dependency package needs to be uploaded before deployment.
 

@@ -14,7 +14,8 @@ from tempfile import TemporaryDirectory
 import time
 import urllib.request
 
-PYPI_INDEXES = ("https://mirrors.ivolces.com/pypi/simple/", "https://pypi.org/simple/")
+PYPI_INDEXES = ("https://mirrors.ivolces.com/pypi/simple/",
+                "https://pypi.tuna.tsinghua.edu.cn/simple/", "https://pypi.org/simple/")
 CPU_INDEXES = ("https://mirror.sjtu.edu.cn/pytorch-wheels/cpu/", "https://download.pytorch.org/whl/cpu")
 
 
@@ -24,7 +25,7 @@ def install_packages(python, requirements, indexes=PYPI_INDEXES):
         try:
             subprocess.run([str(python), "-m", "pip", "--isolated", "install",
                             "--disable-pip-version-check", "--retries", "2", "--timeout", "20",
-                            "--index-url", index, *requirements], check=True, timeout=600)
+                            "--index-url", index, *requirements], check=True, timeout=1800)
             return
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
             print(f"Python 依赖安装失败：{index} ({type(exc).__name__})", flush=True)

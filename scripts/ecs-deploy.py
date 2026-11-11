@@ -8,6 +8,7 @@ import io
 import json
 from pathlib import Path, PurePosixPath
 import sys
+import subprocess
 import tarfile
 import tempfile
 import time
@@ -157,11 +158,14 @@ def main():
     digest = config["sha256"]
     status = ROOT / "deployment-status.json"
     phase = "initializing"
-    def report(phase):
-        atomic_write(status, (json.dumps({
+    def report(phase, error_code=None):
+        data = {
             "phase": phase, "sha256": digest, "object_key": config["object_key"],
             "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        }) + "\n").encode(), 0o644)
+        }
+        if error_code:
+            data["error_code"] = error_code
+        atomic_write(status, (json.dumps(data) + "\n").encode(), 0o644)
     def client_for(reference):
         from tos import TosClientV2
         from tos.credential import EcsCredentialsProvider
@@ -205,8 +209,19 @@ def main():
         report(phase)
         install_native(release)
         report("ready")
-    except Exception:
-        report(f"failed_{phase}")
+    except Exception as error:
+        if isinstance(error, subprocess.TimeoutExpired):
+            code = "INSTALL_TIMEOUT"
+        elif isinstance(error, subprocess.CalledProcessError):
+            code = "INSTALL_COMMAND_FAILED"
+        else:
+            # Only known messages are classified. Never serialize arbitrary SDK exceptions.
+            code = {
+                "所有 Python 下载源均安装失败": "DEPENDENCY_INSTALL_FAILED",
+                "无法下载通过 SHA-256 校验的 ComfyUI 源码": "SOURCE_DOWNLOAD_FAILED",
+                "Native service health check timed out": "SERVICE_START_FAILED",
+            }.get(str(error), "INSTALL_FAILED")
+        report(f"failed_{phase}", code)
         # Detailed SDK exceptions may contain authorization headers; do not print them.
         print("Deployment failed; inspect the phase and build logs. Check TOS references, role permissions and SHA256.", file=sys.stderr)
         return 1

@@ -121,7 +121,7 @@ resource "volcenginecc_tos_object" "source" {
 
 创建依赖为 `安全组 → time_sleep.eni_release_wait → ECS`，销毁顺序反向执行，默认等待 120 秒缓解网卡异步解绑问题。创建阶段不设置等待，销毁阶段不调用 Python 或 Shell 命令；只有等待对象已通过 Apply 写入 State，后续 Destroy 才会执行它。
 
-分片使用 Terraform 默认并发。更换源码交付方式会增删相应的源码桶、对象和读取策略；部署前应检查执行计划。部署和验证步骤见第 4 节。
+分片使用 Terraform 默认并发；部署前应检查执行计划。部署和验证步骤见第 4 节。
 
 ## 4. 使用说明
 
@@ -133,13 +133,15 @@ InfraManager 是火山引擎提供的 Terraform 托管工作台，更多产品�
 
 #### 4.1.1 准备权限
 
+模板使用一次 Apply 创建资源并自动交付源码，ECS 开机后自行下载安装应用。平台执行环境无需为本模板额外准备 Python、AK/SK 或云助手；安装脚本及依赖均在 ECS 内运行。Apply 成功表示资源创建及源码交付完成，应用可能仍在安装，待应用状态为 `ready` 后再访问工作台。
+
 资源栈执行身份需要 CloudControl 及 VPC、子网、安全组、ECS、磁盘、网卡、EIP、TOS、IAM Role/Policy 的管理和关联权限，包括向 ECS 传递角色。ECS 运行时使用模板创建的实例角色访问指定桶或对象，部署身份与运行时身份用途不同。
 
 在目标地域准备 Ubuntu 24.04 amd64 镜像、可用 CPU ECS 规格、EIP 和磁盘配额，以及全局唯一的媒资桶名。建议从 4 vCPU / 8 GiB 起步，实际容量取决于并发生成、视频归档和 FFmpeg 负载。
 
 通过 [火山方舟控制台](https://console.volcengine.com/ark) 开通所选 Seedance 视频模型，并创建有权调用该模型的 API Key。Ark Key 与云账号 AK/SK、模型 ID 或 `ep-...` 接入点 ID 不同，部署时必须通过平台敏感参数 `ark_api_key` 提供。密钥文件与状态存储说明见第 3.1 节。
 
-新 ECS 开机时自动安装，依赖包由公开源提供。ComfyUI 源码从 GitHub 下载并校验 SHA-256，失败时重试并尝试 GitHub 的归档直链。CPU PyTorch 先用上海交大镜像，失败后切换官方 CPU 源。普通 Python 包先用火山镜像，失败后切换官方 PyPI。ECS 还需要访问 TOS、Ubuntu 软件源和方舟 HTTPS 接口。
+新 ECS 开机时自动安装，依赖包由公开源提供。ComfyUI 源码从 GitHub 下载并校验 SHA-256，失败时重试并尝试 GitHub 的归档直链。CPU PyTorch 先用上海交大镜像，失败后切换官方 CPU 源。普通 Python 包先用火山镜像，失败后依次切换清华镜像和官方 PyPI；每个源的完整安装上限为 30 分钟，单次网络读取超时为 20 秒，并保留下载缓存供自动重试使用。ECS 还需要访问 TOS、Ubuntu 软件源和方舟 HTTPS 接口。
 
 工作室保留固定版本的官方前端和节点运行依赖，省去 ComfyUI 自带的示例工作流、示例媒体和内置节点文档。示例工作流随自定义节点安装，可在官方模板扩展分类加载。安装过程中无需提前上传依赖包。
 
