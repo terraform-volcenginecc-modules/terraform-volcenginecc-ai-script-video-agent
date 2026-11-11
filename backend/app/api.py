@@ -29,7 +29,7 @@ login_attempts: dict[str, list[float]] = {}
 @asynccontextmanager
 async def lifespan(app):
     if not secret("owner_password") or not secret("session_key"):
-        raise RuntimeError("请先运行 scripts/setup-local.sh 创建登录密钥")
+        raise RuntimeError("缺少工作室密码或会话密钥，请检查服务端凭据文件")
     validate_video_config()
     migrate()
     yield

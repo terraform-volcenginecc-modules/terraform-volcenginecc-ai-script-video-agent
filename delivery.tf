@@ -1,5 +1,4 @@
 locals {
-  auto_delivery = var.auto_source_upload && var.source_release == null
   source_payload = jsonencode(merge(
     { for name in fileset("${path.module}/backend/app", "**") :
       "backend/app/${name}" => filebase64("${path.module}/backend/app/${name}")
@@ -7,6 +6,9 @@ locals {
     },
     { for name in fileset("${path.module}/frontend/comfyui-extension", "**") :
       "frontend/comfyui-extension/${name}" => filebase64("${path.module}/frontend/comfyui-extension/${name}")
+    },
+    { for name in fileset("${path.module}/workflows", "*.json") :
+      "workflows/${name}" => filebase64("${path.module}/workflows/${name}")
     },
     { for name in ["backend/requirements.txt", "backend/comfyui_extension.py", "frontend/login/index.html",
       "frontend/login/login.js", "frontend/nginx/studio.conf", "frontend/nginx/public.conf", "scripts/ecs-native.py",
@@ -33,14 +35,12 @@ locals {
     chunk_size     = local.source_chunk_size
     chunk_count    = local.source_chunk_count
   })
-  delivery_read_resources = var.source_release == null ? [] : [
-    "trn:tos:::${var.source_release.bucket}/${var.source_release.object_key}"
-  ]
 }
 
+# Always deliver the current template source. Keep count indexes for existing stack addresses.
 # Only the application source parts and manifest are public. The bucket stays private.
 resource "volcenginecc_tos_bucket" "source" {
-  count         = local.auto_delivery ? 1 : 0
+  count         = 1
   name          = "${var.name_prefix}-source-${substr(sha256(volcenginecc_vpc_vpc.app.id), 0, 12)}"
   project_name  = var.project_name
   bucket_type   = "fns"
@@ -61,7 +61,7 @@ resource "volcenginecc_tos_bucket" "source" {
 }
 
 resource "volcenginecc_tos_object" "source_parts" {
-  for_each               = local.auto_delivery ? local.source_parts : {}
+  for_each               = local.source_parts
   bucket                 = volcenginecc_tos_bucket.source[0].name
   key                    = "releases/${local.source_payload_sha256}/parts/part-${each.key}.txt"
   content                = each.value
@@ -86,7 +86,7 @@ resource "volcenginecc_tos_object" "source_parts" {
 # Retain the source[0] address, with a new key so legacy payloads are never mistaken
 # for manifests. Each CCAPI object request/response remains small.
 resource "volcenginecc_tos_object" "source" {
-  count                  = local.auto_delivery ? 1 : 0
+  count                  = 1
   bucket                 = volcenginecc_tos_bucket.source[0].name
   key                    = "releases/${local.source_payload_sha256}/manifest.json"
   content                = local.source_manifest

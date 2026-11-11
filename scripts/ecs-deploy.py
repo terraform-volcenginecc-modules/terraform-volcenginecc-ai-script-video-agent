@@ -26,9 +26,15 @@ def validate_native_files(names):
         layout = ("frontend/登录.html", "frontend/comfyui扩展/工作室.js",
                   "backend/comfyui扩展.py", "开源组件.json", "scripts/安装ComfyUI.py",
                   "frontend/nginx.conf", "frontend/nginx-public.conf")
-    else:
+    elif "frontend/comfyui-extension/studio.js" in names and "frontend/comfyui-extension/auth.js" not in names:
         layout = ("frontend/login/index.html", "frontend/login/login.js",
                   "frontend/comfyui-extension/studio.js", "frontend/comfyui-extension/studio.css",
+                  "backend/comfyui_extension.py", "scripts/comfyui-release.json",
+                  "scripts/install-comfyui.py", "scripts/comfyui-requirements.txt",
+                  "frontend/nginx/studio.conf", "frontend/nginx/public.conf")
+    else:
+        layout = ("frontend/login/index.html", "frontend/login/login.js",
+                  "frontend/comfyui-extension/auth.js", "workflows/ark-text-to-video.json",
                   "backend/comfyui_extension.py", "scripts/comfyui-release.json",
                   "scripts/install-comfyui.py", "scripts/comfyui-requirements.txt",
                   "frontend/nginx/studio.conf", "frontend/nginx/public.conf")

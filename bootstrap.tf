@@ -1,17 +1,13 @@
 locals {
-  deployment_enabled = local.auto_delivery || var.source_release != null
-  deployment_config = !local.deployment_enabled ? null : merge(
-    var.source_release == null ? {} : var.source_release,
-    local.auto_delivery ? {
-      bucket          = volcenginecc_tos_bucket.source[0].name
-      object_key      = volcenginecc_tos_object.source[0].key
-      source_url      = split("?", volcenginecc_tos_object.source[0].url)[0]
-      payload_format  = "base64gzip_json_chunks"
-      manifest_sha256 = sha256(local.source_manifest)
-      sha256          = local.source_payload_sha256
-    } : {},
-    { role_name = volcenginecc_iam_role.app.role_name }
-  )
+  deployment_config = {
+    bucket          = volcenginecc_tos_bucket.source[0].name
+    object_key      = volcenginecc_tos_object.source[0].key
+    source_url      = split("?", volcenginecc_tos_object.source[0].url)[0]
+    payload_format  = "base64gzip_json_chunks"
+    manifest_sha256 = sha256(local.source_manifest)
+    sha256          = local.source_payload_sha256
+    role_name       = volcenginecc_iam_role.app.role_name
+  }
   comfyui_runtime = var.comfyui == null ? null : {
     base_url       = var.comfyui.base_url
     api_key_file   = "/opt/ai-animation/secrets/comfyui_api_key"
@@ -153,7 +149,7 @@ locals {
         owner       = "root:root"
         permissions = "0600"
         content     = "${trimspace(var.comfyui_api_key)}\n"
-      }], !local.deployment_enabled ? [] : [
+      }], [
       {
         path        = "/opt/ai-animation/config/deployment.json"
         owner       = "root:root"
@@ -180,7 +176,7 @@ locals {
       ["systemctl", "daemon-reload"],
       ["systemctl", "enable", "ssh.service"],
       ["systemctl", "reload-or-restart", "ssh.service"],
-      !local.deployment_enabled ? ["systemctl", "enable", "ai-animation.service"] : ["systemctl", "enable", "--now", "ai-animation.service"],
+      ["systemctl", "enable", "--now", "ai-animation.service"],
     ]
   })}\n"
 }

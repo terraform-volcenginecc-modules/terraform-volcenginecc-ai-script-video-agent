@@ -5,6 +5,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg ca-certi
 COPY scripts/install-comfyui.py scripts/comfyui-requirements.txt scripts/comfyui-release.json ./scripts/
 COPY backend/comfyui_extension.py ./backend/
 COPY frontend/comfyui-extension ./frontend/comfyui-extension
+COPY workflows ./workflows
 RUN python scripts/install-comfyui.py --release /opt/ai-animation
 WORKDIR /opt/ai-animation/ComfyUI
 ENV ANIMATION_BACKEND_URL=http://api:8000 OWNER_PASSWORD_FILE=/run/secrets/owner_password SESSION_KEY_FILE=/run/secrets/session_key

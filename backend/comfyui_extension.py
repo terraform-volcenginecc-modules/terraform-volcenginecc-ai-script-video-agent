@@ -1,4 +1,5 @@
 """官方 ComfyUI 自定义节点，通过 HTTP 接入持久任务，不修改官方源码。"""
+import hashlib
 import hmac
 from importlib.util import find_spec
 import json
@@ -7,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+from tempfile import NamedTemporaryFile
 import time
 from urllib.parse import urlsplit
 
@@ -45,14 +47,14 @@ def wait(project_id, stage):
         if state["status"] == "succeeded":
             return json.dumps(state, ensure_ascii=False)
         if state["status"] in ("failed", "uncertain", "cancelled"):
-            raise RuntimeError(state.get("error") or "请在任务面板核对并恢复原任务")
+            raise RuntimeError(state.get("error") or "请通过业务任务接口核对并恢复原任务")
         if time.monotonic() >= deadline:
-            raise RuntimeError("节点等待超时，任务仍保留；请在任务面板查看，勿重复创建项目")
+            raise RuntimeError("节点等待超时，任务仍保留；请查询原项目的任务状态")
         time.sleep(3)
 
 
 class ProjectNode:
-    CATEGORY = "火山引擎/视频工作室"
+    CATEGORY = "火山引擎/历史项目工作流"
     RETURN_TYPES = ("ANIMATION_PROJECT",)
     RETURN_NAMES = ("项目",)
     FUNCTION = "execute"
@@ -110,11 +112,94 @@ class ComposeNode(StageNode):
     STAGE = "compose"
 
 
+class ArkTextToVideo:
+    CATEGORY = "火山方舟"
+    RETURN_TYPES = ("VIDEO",)
+    RETURN_NAMES = ("视频",)
+    FUNCTION = "execute"
+    OUTPUT_NODE = True
+    DESCRIPTION = "使用服务端方舟 Key 生成视频。同一批次和参数复用原任务，换批次生成新视频。"
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        capabilities = request("GET", "/ark/video-models")
+        return {"required": {
+            "prompt": ("STRING", {"multiline": True, "default": "一只纸船在平静的水面上缓慢漂动，固定镜头。"}),
+            "model": (capabilities["models"],),
+            "duration": ("INT", {"default": 4, "min": 4, "max": 15}),
+            "ratio": (capabilities["ratios"],),
+            "resolution": (["480p", "720p", "1080p"], {"default": "720p"}),
+            "generate_audio": ("BOOLEAN", {"default": True}),
+            "watermark": ("BOOLEAN", {"default": False}),
+            "generation_id": ("STRING", {"default": "1", "tooltip": "生成批次。相同批次和参数复用原任务。生成新视频请更换批次。"}),
+        }}
+
+    @classmethod
+    def IS_CHANGED(cls, **kwargs):
+        return float("nan")
+
+    def execute(self, **values):
+        from comfy.model_management import throw_exception_if_processing_interrupted
+        from comfy_api.latest import InputImpl, io, ui
+        import folder_paths
+
+        state = request("POST", "/ark/videos", values)
+        job_id = state["id"]
+        deadline = time.monotonic() + 7200
+        while state["status"] != "succeeded":
+            throw_exception_if_processing_interrupted()
+            if state["status"] in ("failed", "uncertain", "cancelled", "upload_failed"):
+                raise RuntimeError(f"任务 {job_id}：{state.get('error') or state['status']}。保留生成批次可查询原任务。")
+            if time.monotonic() >= deadline:
+                raise RuntimeError(f"节点等待超时，任务 {job_id} 仍保留。保持生成批次再次运行以查询原任务。")
+            time.sleep(3)
+            state = request("GET", f"/ark/videos/{job_id}")
+        throw_exception_if_processing_interrupted()
+        directory = Path(folder_paths.get_temp_directory()) / "ark"
+        directory.mkdir(parents=True, exist_ok=True)
+        # Both identifiers come from the backend, never from a workflow path input.
+        import uuid
+        filename = f"{uuid.UUID(job_id)}-{uuid.UUID(state['asset_id'])}.mp4"
+        target = directory / filename
+        csrf = secrets.token_urlsafe(32)
+        cookie = URLSafeTimedSerializer(secret("session_key"), salt="animation-owner-v1").dumps({"csrf": csrf})
+        temporary = None
+        try:
+            with httpx.Client(base_url=BACKEND, timeout=120, trust_env=False) as client:
+                client.cookies.set("session", cookie)
+                with client.stream("GET", f"/api/ark/videos/{job_id}/content") as response:
+                    if response.is_error:
+                        raise RuntimeError(f"任务 {job_id} 的视频下载失败，请保持生成批次重试")
+                    checksum = response.headers.get("x-content-sha256")
+                    digest = hashlib.sha256()
+                    size = 0
+                    with NamedTemporaryFile(dir=directory, suffix=".part", delete=False) as stream:
+                        temporary = Path(stream.name)
+                        for chunk in response.iter_bytes():
+                            throw_exception_if_processing_interrupted()
+                            size += len(chunk)
+                            if size > 1024 * 1024 * 1024:
+                                raise RuntimeError("视频超过 1 GiB 本地下载限制")
+                            digest.update(chunk)
+                            stream.write(chunk)
+                    if not size or not checksum or digest.hexdigest() != checksum:
+                        raise RuntimeError("视频完整性校验失败，请保持生成批次重试")
+                    temporary.replace(target)
+        finally:
+            if temporary:
+                temporary.unlink(missing_ok=True)
+        video = InputImpl.VideoFromFile(str(target))
+        return {"ui": ui.PreviewVideo([ui.SavedResult(filename, "ark", io.FolderType.temp)]).as_dict(),
+                "result": (video,)}
+
+
 NODE_CLASS_MAPPINGS = {
+    "VolcArkTextToVideo": ArkTextToVideo,
     "VolcProject": ProjectNode, "VolcScript": ScriptNode,
     "VolcVideo": VideoNode, "VolcCompose": ComposeNode,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
+    "VolcArkTextToVideo": "火山方舟视频生成",
     "VolcProject": "火山 · 项目", "VolcScript": "火山 · Ark 剧本",
     "VolcVideo": "火山 · 分镜视频", "VolcCompose": "火山 · 拼接与 TOS 归档",
 }

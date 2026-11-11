@@ -1,15 +1,121 @@
 """ComfyUI 节点的持久任务入口，复用原队列、恢复和私有 TOS 归档。"""
+import json
 import uuid
 
 from fastapi import Depends, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from . import api
 from .config import models
 from .db import AssetBackup, Job, Project, Session, Shot
-from .schemas import ProjectInput
-from .storage import media_ready
+from .schemas import ProjectInput, VideoSettings
+from .storage import local_asset, media_ready
+
+
+ARK_VIDEO_MODELS = (
+    "doubao-seedance-2-0-260128",
+    "doubao-seedance-2-0-fast-260128",
+    "doubao-seedance-2-0-mini-260615",
+)
+
+
+class ArkVideoInput(BaseModel):
+    model_config = {"extra": "forbid"}
+    prompt: str = Field(min_length=1, max_length=6000)
+    model: str
+    duration: int = Field(default=4, ge=4, le=15)
+    ratio: str = "16:9"
+    resolution: str = "720p"
+    generate_audio: bool = True
+    watermark: bool = False
+    generation_id: str = Field(default="1", min_length=1, max_length=100)
+
+
+@api.app.get("/api/ark/video-models", dependencies=[Depends(api.authenticated)])
+def ark_video_models():
+    return {"models": list(ARK_VIDEO_MODELS), "ratios": list(api.SIZES)}
+
+
+@api.app.post("/api/ark/videos", dependencies=[Depends(api.authenticated)])
+def generate_ark_video(body: ArkVideoInput):
+    if body.model not in ARK_VIDEO_MODELS or body.ratio not in api.SIZES or not body.prompt.strip():
+        raise HTTPException(422, "请选择支持的 Seedance 模型、画幅并填写提示词")
+    try:
+        settings = VideoSettings(resolution=body.resolution, generate_audio=body.generate_audio,
+                                 watermark=body.watermark).model_dump()
+        api.validate_settings(body.model, settings, provider="ark")
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from None
+    identity = json.dumps(body.model_dump(), sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    project_id = str(uuid.uuid5(uuid.NAMESPACE_URL, "ark-text-video:" + identity))
+    job_id = str(uuid.uuid5(uuid.UUID(project_id), "video"))
+    with Session.begin() as db:
+        if db.bind.dialect.name == "postgresql":
+            from sqlalchemy import text
+            db.execute(text("SELECT pg_advisory_xact_lock(:key)"),
+                       {"key": uuid.UUID(project_id).int % (2 ** 63 - 1)})
+        existing = db.get(Job, job_id)
+        if not existing:
+            spec = {"duration": body.duration, "scene": "方舟文生视频", "characters": [],
+                    "action": body.prompt[:2000], "camera": "按提示词生成"}
+            project = Project(id=project_id, name="ComfyUI · " + body.generation_id[:85],
+                              brief=body.prompt, duration=body.duration, ratio=body.ratio,
+                              script_model=models()["script_model_id"], video_model=body.model,
+                              video_settings=settings,
+                              script={"title": "方舟文生视频", "synopsis": body.prompt[:3000],
+                                      "style_bible": "按提示词生成", "characters": [], "shots": [spec]})
+            db.add(project)
+            db.flush()
+            shot = Shot(id=str(uuid.uuid5(uuid.UUID(project_id), "shot")),
+                        project_id=project_id, position=1, spec=spec, status="queued")
+            db.add(shot)
+            db.flush()
+            db.add(Job(id=job_id, project_id=project_id, shot_id=shot.id, kind="video",
+                       snapshot={**api.snapshot(project), "shot": spec, "prompt": body.prompt,
+                                 "generation_config": {"mode": "text"}, "reference": None,
+                                 "references": [], "video_provider": "ark", "direct_ark": True}))
+    return ark_video_state(job_id)
+
+
+def ark_video_job(db, job_id):
+    job = db.get(Job, job_id)
+    if not job or job.kind != "video" or not job.snapshot.get("direct_ark"):
+        raise HTTPException(404, "方舟视频任务不存在")
+    return job
+
+
+@api.app.get("/api/ark/videos/{job_id}", dependencies=[Depends(api.authenticated)])
+def ark_video_state(job_id: str):
+    with Session() as db:
+        job = ark_video_job(db, job_id)
+        data = api.job_data(job)
+        if job.status == "succeeded":
+            asset_id = job.snapshot.get("output_asset_id")
+            data["asset_id"] = asset_id
+            if not media_ready(db, asset_id):
+                backup = db.get(AssetBackup, asset_id)
+                data["status"] = "upload_failed" if backup and backup.status == "failed" else "uploading"
+                data["error"] = backup.error if backup and backup.status == "failed" else None
+        return data
+
+
+@api.app.get("/api/ark/videos/{job_id}/content", dependencies=[Depends(api.authenticated)])
+def ark_video_content(job_id: str):
+    with Session() as db:
+        job = ark_video_job(db, job_id)
+        asset_id = job.snapshot.get("output_asset_id")
+        if job.status != "succeeded" or not media_ready(db, asset_id):
+            raise HTTPException(409, "视频尚未完成生成和 TOS 归档")
+        asset = db.get(api.Asset, asset_id)
+        try:
+            path = local_asset(db, asset)
+        except (ValueError, OSError) as error:
+            raise HTTPException(409, str(error)) from None
+        from .media import digest
+        return FileResponse(path, media_type="video/mp4",
+                            headers={"X-Content-SHA256": digest(path)})
 
 
 class NativeProject(BaseModel):
@@ -75,7 +181,7 @@ def state(project_id, stage):
             complete = bool(project.export_asset) if stage == "compose" else bool(project.script)
         blocked = next((job for job in jobs if job.status in ("failed", "uncertain", "cancelled")), None)
         if blocked:
-            return {"status": blocked.status, "error": blocked.error or "请在任务面板恢复原任务",
+            return {"status": blocked.status, "error": blocked.error or "请通过业务任务接口恢复原任务",
                     "job_id": blocked.id}
         if complete and all(media_ready(db, asset) for asset in assets):
             return {"status": "succeeded", "project_id": project_id, "assets": assets,

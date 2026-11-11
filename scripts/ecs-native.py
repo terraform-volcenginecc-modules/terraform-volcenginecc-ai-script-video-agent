@@ -193,10 +193,10 @@ def install(release):
                          "print(URLSafeTimedSerializer(Path('/opt/ai-animation/secrets/session_key').read_text().strip(), "
                          "salt='animation-owner-v1').dumps({'csrf':'health'}))",
                          capture_output=True, text=True).stdout.strip()
-            request = urllib.request.Request("http://127.0.0.1:8188/object_info/VolcProject",
+            request = urllib.request.Request("http://127.0.0.1:8188/object_info/VolcArkTextToVideo",
                                              headers={"Cookie": "session=" + cookie})
             with urllib.request.urlopen(request, timeout=5) as response:
-                if "VolcProject" not in json.load(response):
+                if "VolcArkTextToVideo" not in json.load(response):
                     raise RuntimeError("ComfyUI 业务节点未加载")
             break
         except Exception:

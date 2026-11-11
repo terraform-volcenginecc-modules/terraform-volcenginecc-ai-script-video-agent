@@ -149,27 +149,10 @@ resource "volcenginecc_iam_role" "app" {
     }]
   })
   # This is the only owner of the policy attachment.
-  policies = concat([{
+  policies = [{
     policy_name = volcenginecc_iam_policy.assets.policy_name
     policy_type = volcenginecc_iam_policy.assets.policy_type
-    }], [for policy in volcenginecc_iam_policy.delivery : {
-    policy_name = policy.policy_name
-    policy_type = policy.policy_type
-  }])
-}
-
-resource "volcenginecc_iam_policy" "delivery" {
-  count       = length(local.delivery_read_resources) > 0 ? 1 : 0
-  policy_name = "${var.name_prefix}-delivery"
-  policy_type = "Custom"
-  description = "Read only the pinned source release"
-  policy_document = jsonencode({
-    Statement = [{
-      Effect   = "Allow"
-      Action   = ["tos:GetObject"]
-      Resource = distinct(local.delivery_read_resources)
-    }]
-  })
+  }]
 }
 
 # Creation: security group -> release barrier -> ECS.

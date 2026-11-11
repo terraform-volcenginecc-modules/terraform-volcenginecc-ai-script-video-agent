@@ -27,7 +27,7 @@ def deploy(args):
     for path in ROOT.glob("*.tf"):
         shutil.copy2(path, target / path.name)
     shutil.copy2(ROOT / "terraform.tfvars", target / "terraform.tfvars")
-    for name in ("backend", "frontend", "scripts"):
+    for name in ("backend", "frontend", "scripts", "workflows"):
         link = target / name
         if not link.exists():
             link.symlink_to(ROOT / name, target_is_directory=True)

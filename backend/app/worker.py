@@ -220,6 +220,8 @@ def execute(job, provider_factory=None, downloader=None):
                 asset = Asset(project_id=row.project_id, path=relative, duration=duration, metadata_json=metadata)
                 db.add(asset)
                 db.flush()
+                if row.snapshot.get("direct_ark"):
+                    row.snapshot = {**row.snapshot, "output_asset_id": asset.id}
                 if tail_relative:
                     tail = Asset(project_id=row.project_id, kind="image", path=tail_relative,
                                  duration=None, metadata_json={**tail_metadata, "source_asset_id": asset.id,

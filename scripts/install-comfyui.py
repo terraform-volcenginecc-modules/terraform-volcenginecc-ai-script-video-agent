@@ -84,7 +84,11 @@ def install(release):
     extension = target / "custom_nodes/ai_animation"
     extension.mkdir(exist_ok=True)
     shutil.copy2(release / "backend/comfyui_extension.py", extension / "__init__.py")
+    # Replace extension assets so an earlier sidebar script cannot remain auto-loaded.
+    if (extension / "web").exists():
+        shutil.rmtree(extension / "web")
     shutil.copytree(release / "frontend/comfyui-extension", extension / "web", dirs_exist_ok=True)
+    shutil.copytree(release / "workflows", extension / "example_workflows", dirs_exist_ok=True)
     return target
 
 

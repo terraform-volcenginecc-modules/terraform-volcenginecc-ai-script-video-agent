@@ -314,37 +314,6 @@ variable "media_url_ttl_seconds" {
   }
 }
 
-variable "source_release" {
-  description = "Optional immutable source object in an EXISTING private TOS delivery bucket. No signed URLs or secrets."
-  type = object({
-    bucket     = string
-    region     = string
-    endpoint   = string
-    object_key = string
-    sha256     = string
-    version_id = optional(string)
-  })
-  default  = null
-  nullable = true
-  validation {
-    condition = var.source_release == null ? true : (
-      can(regex("^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$", var.source_release.bucket)) &&
-      can(regex("^[a-z]{2}-[a-z0-9-]+$", var.source_release.region)) &&
-      can(regex("^https://tos(-s3)?-[a-z0-9-]+\\.volces\\.com$", var.source_release.endpoint)) &&
-      can(regex("^[a-f0-9]{64}$", var.source_release.sha256)) &&
-      startswith(var.source_release.object_key, "releases/") &&
-      !can(regex("[*?\\n\\r]", var.source_release.object_key))
-    )
-    error_message = "Use a private TOS bucket, regional HTTPS endpoint, releases/ object key without wildcards, and lowercase SHA256."
-  }
-}
-
-variable "auto_source_upload" {
-  description = "Automatically upload application source and ComfyUI extensions as 16 KiB public-read TOS parts plus a checksum manifest. Existing source_release takes precedence."
-  type        = bool
-  default     = true
-}
-
 variable "tags" {
   description = "Additional resource tags."
   type        = map(string)

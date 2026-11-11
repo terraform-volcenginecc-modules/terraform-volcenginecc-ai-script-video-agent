@@ -40,7 +40,7 @@ output "application_access" {
     ark_secret_path        = "/opt/ai-animation/secrets/ark_api_key"
     start_command          = "sudo systemctl start ai-animation.service"
     web_ingress_enabled    = length(var.web_allowed_cidrs) > 0
-    source_deploy_enabled  = local.deployment_enabled
+    source_deploy_enabled  = true
     ecs_login_mode         = var.ecs_login_mode
     deployment_status_path = "/opt/ai-animation/deployment-status.json"
     status_command         = "sudo systemctl status ai-animation.service ai-animation-comfyui.service ai-animation-api.service ai-animation-worker.service nginx.service; sudo cat /opt/ai-animation/deployment-status.json"
@@ -51,12 +51,12 @@ output "application_access" {
 output "source_delivery" {
   description = "Non-secret source location. Automatic source objects are public-read; the source and asset buckets have private bucket ACLs."
   value = {
-    mode           = local.auto_delivery ? "auto_public" : (var.source_release == null ? "infrastructure_only" : "external_private")
-    bucket         = local.auto_delivery ? volcenginecc_tos_bucket.source[0].name : (var.source_release == null ? null : var.source_release.bucket)
-    object_key     = local.auto_delivery ? volcenginecc_tos_object.source[0].key : (var.source_release == null ? null : var.source_release.object_key)
-    sha256         = local.auto_delivery ? local.source_payload_sha256 : (var.source_release == null ? null : var.source_release.sha256)
-    public_url     = local.auto_delivery ? split("?", volcenginecc_tos_object.source[0].url)[0] : null
-    payload_format = local.auto_delivery ? "base64gzip_json_chunks" : (var.source_release == null ? null : "tar_gzip")
-    chunk_count    = local.auto_delivery ? local.source_chunk_count : null
+    mode           = "auto_public"
+    bucket         = volcenginecc_tos_bucket.source[0].name
+    object_key     = volcenginecc_tos_object.source[0].key
+    sha256         = local.source_payload_sha256
+    public_url     = split("?", volcenginecc_tos_object.source[0].url)[0]
+    payload_format = "base64gzip_json_chunks"
+    chunk_count    = local.source_chunk_count
   }
 }
