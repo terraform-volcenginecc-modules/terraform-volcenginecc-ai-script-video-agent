@@ -293,14 +293,11 @@ Review the local `terraform.tfvars` and update values for the target account. Wh
 | `ark_base_url` | `https://ark.cn-beijing.volces.com/api/v3` | Ark API base URL |
 | `script_model_id` | `doubao-seed-2-1-pro-260628` | Default for legacy project APIs; unused by the text-to-video node |
 | `video_model_id` | `doubao-seedance-2-0-260128` | Default for legacy project APIs; select the new node model on the canvas |
-| `video_provider` | `ark` | Legacy project APIs only; the new Ark node always uses Ark |
-| `comfyui` | `null` | 选择 ComfyUI 时必填：真实 API 工作流、节点映射、能力与远程地址 |
-| `comfyui_api_key` | 空，敏感 | 选择 ComfyUI 时必填的 Bearer 密钥，直接写入 ECS 密钥文件 |
 | `media_url_ttl_seconds` | `900` | Signed media URL lifetime, an integer from 60–3600 seconds; shortened when the instance-role credential expires sooner |
 
 Login credentials are mutually exclusive: provide only the key-pair name in key-pair mode and only the password in password mode. Supply `ark_api_key` through a sensitive platform input or `TF_VAR_ark_api_key`. Automatically loaded `terraform.tfvars` values take precedence over `TF_VAR_*`; do not assign a variable in the parameter file when injecting the same variable through the environment.
 
-CPU ECS runs the official ComfyUI interface and custom nodes, while Ark performs model computation. The new Ark node always uses the customer Ark key. Remote GPU settings remain for legacy project APIs and are unnecessary for this workflow.
+CPU ECS runs the official ComfyUI interface and custom nodes, while Ark performs model computation. The template always invokes Ark with the customer Ark key. No additional remote ComfyUI URL, workflow contract or authentication key is required. ECS automatically installs and starts the local official ComfyUI service.
 
 #### 4.2.2 Deploy with Local Terraform
 

@@ -8,17 +8,8 @@ locals {
     sha256          = local.source_payload_sha256
     role_name       = volcenginecc_iam_role.app.role_name
   }
-  comfyui_runtime = var.comfyui == null ? null : {
-    base_url       = var.comfyui.base_url
-    api_key_file   = "/opt/ai-animation/secrets/comfyui_api_key"
-    workflow       = try(jsondecode(var.comfyui.workflow_json), {})
-    bindings       = { for name, binding in var.comfyui.bindings : name => binding if binding != null }
-    output_node_id = var.comfyui.output_node_id
-    output_index   = var.comfyui.output_index
-    capabilities   = var.comfyui.capabilities
-  }
-  runtime_config = merge({
-    video_provider = var.video_provider
+  runtime_config = {
+    video_provider = "ark"
     infrastructure = {
       region    = var.region
       role_trn  = volcenginecc_iam_role.app.trn
@@ -45,7 +36,7 @@ locals {
       queue_backend       = "postgresql"
       composition_workers = 1
     }
-  }, local.comfyui_runtime == null ? {} : { comfyui = local.comfyui_runtime })
+  }
 
   cloud_init = "#cloud-config\n${jsonencode({
     package_update = true
@@ -77,7 +68,7 @@ locals {
     # Modern versions support this flag; 20.3 also needs the module filter above.
     ssh      = { emit_keys_to_console = false }
     packages = ["postgresql-16", "nginx", "ffmpeg", "openssl", "python3-venv", "openssh-server"]
-    write_files = concat([
+    write_files = [
       {
         path        = "/etc/ssh/sshd_config.d/00-ai-animation-login.conf"
         owner       = "root:root"
@@ -143,13 +134,7 @@ locals {
           [Install]
           WantedBy=multi-user.target
           UNIT
-      }
-      ], var.comfyui == null ? [] : [{
-        path        = "/opt/ai-animation/secrets/comfyui_api_key"
-        owner       = "root:root"
-        permissions = "0600"
-        content     = "${trimspace(var.comfyui_api_key)}\n"
-      }], [
+      },
       {
         path        = "/opt/ai-animation/config/deployment.json"
         owner       = "root:root"
@@ -169,7 +154,7 @@ locals {
         permissions = "0750"
         content     = file("${path.module}/scripts/ecs-bootstrap.sh")
       }
-    ])
+    ]
     runcmd = [
       ["/usr/local/sbin/ai-animation-prepare"],
       ["/usr/sbin/sshd", "-t"],

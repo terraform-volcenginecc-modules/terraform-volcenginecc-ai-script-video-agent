@@ -293,14 +293,11 @@ export TF_VAR_ecs_password="<strong-password>"
 | `ark_base_url` | `https://ark.cn-beijing.volces.com/api/v3` | 方舟 API 地址 |
 | `script_model_id` | `doubao-seed-2-1-pro-260628` | 历史项目接口的默认剧本模型；文生视频节点不调用 |
 | `video_model_id` | `doubao-seedance-2-0-260128` | 历史项目接口的默认视频模型；新节点在画布中选择模型 |
-| `video_provider` | `ark` | 仅作用于历史项目接口，可选 `comfyui`；新方舟节点始终调用 Ark |
-| `comfyui` | `null` | 选择 ComfyUI 时必填：真实 API 工作流、节点映射、能力与远程地址 |
-| `comfyui_api_key` | 空，敏感 | 选择 ComfyUI 时必填的 Bearer 密钥，直接写入 ECS 密钥文件 |
 | `media_url_ttl_seconds` | `900` | 素材签名地址有效期，整数 60–3600 秒；实例角色凭据剩余有效期不足时自动缩短 |
 
 两种登录凭据互斥：密钥模式只填写密钥对名称，密码模式只填写密码。`ark_api_key` 必须通过平台敏感参数或 `TF_VAR_ark_api_key` 提供。自动加载的 `terraform.tfvars` 优先于 `TF_VAR_*`；通过环境变量注入参数时，不要在参数文件中为同名变量赋值。
 
-CPU ECS 运行官方 ComfyUI 界面和自定义节点，模型计算由方舟完成。新方舟节点始终使用客户的 Ark Key；远程 GPU 配置仅为历史项目接口保留，本流程无需配置。
+CPU ECS 运行官方 ComfyUI 界面和自定义节点，模型计算由方舟完成。模板固定使用客户的 Ark Key 调用方舟，无需额外的远程 ComfyUI 地址、工作流契约或认证密钥。本机官方 ComfyUI 由 ECS 自动安装并启动。
 
 #### 4.2.2 本地执行 Terraform 部署
 
