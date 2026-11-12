@@ -1,0 +1,18 @@
+# Use together with compose.yaml. Same images and network as delivery configuration.
+services:
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+  comfyui:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.comfyui
+  web:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile

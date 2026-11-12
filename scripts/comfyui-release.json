@@ -1,0 +1,11 @@
+{
+  "comfyui": {
+    "version": "0.44.0",
+    "source_url": "https://github.com/Comfy-Org/ComfyUI/archive/refs/tags/v0.44.0.tar.gz",
+    "fallback_source_urls": ["https://codeload.github.com/Comfy-Org/ComfyUI/tar.gz/refs/tags/v0.44.0"],
+    "sha256": "7d796d74f42fe862eb55d1c217349fee92c2cac5d4ababe06c8b73f90c936dc0",
+    "frontend_package": "comfyui-frontend-package",
+    "frontend_version": "1.57.6",
+    "license": "GPL-3.0"
+  }
+}

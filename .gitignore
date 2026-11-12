@@ -1,0 +1,26 @@
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.auto.tfvars
+*.auto.tfvars.json
+crash.log
+crash.*.log
+.env
+secrets/
+.venv/
+__pycache__/
+.pytest_cache/
+# 本地缓存和系统生成文件不进入源码。
+node_modules/
+frontend/dist/
+.DS_Store
+.screenshots/
+data/
+work/
+config/runtime.json
+.local/
+releases/
+.idea/
+*.tsbuildinfo
+# Terraform creates .terraform.lock.hcl during init.
