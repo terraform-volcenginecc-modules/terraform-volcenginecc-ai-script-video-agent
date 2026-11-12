@@ -1,37 +1,37 @@
-# 自部署 ComfyUI 火山方舟视频生成
+# 一键部署 ComfyUI 及并使用 Seedance 文生视频
 
-在平台填写客户自己的方舟 Key，部署后登录公网 ComfyUI。在官方画布加入「火山方舟视频生成」节点，填写提示词、选择模型和视频参数，点击官方「运行」。节点返回标准 `VIDEO`，画布可以预览视频，连接官方 `SaveVideo` 节点保存 MP4。
+本模板把官方 ComfyUI 与「火山方舟视频生成」节点部署到客户火山账号：在平台填入方舟 Key，部署后登录工作台，添加节点、填写提示词和视频参数，点击「运行」即可生成视频。Terraform 创建 VPC、ECS、TOS、实例角色和安全组，ECS 首次开机自动安装 ComfyUI、业务后端、Worker 与 PostgreSQL，并配置 Nginx 登录和 HTTPS。免去手工搭建环境和拼装组件，凭据、数据和费用都留在客户账号内，开箱即可完成 Seedance 文生视频。
 
 ## 1. 业务背景
 
-模板面向通过客户火山账号使用 Seedance 文生视频的场景，提供可自部署的 ComfyUI 画布和方舟视频节点。
+本模板面向客户使用自有火山账号完成 Seedance 文生视频的场景，提供可自部署的 ComfyUI 画布和方舟视频节点。
 
 - **接入步骤分散**：官方画布、自定义节点、业务后端和存储需要配套配置，手工安装容易遗漏组件。
-- **凭据与计费归属不清**：客户需要使用自己的方舟 Key，在自己的火山账号下管理模型权限、用量和费用。
-- **长任务恢复困难**：视频生成、轮询、下载和归档跨越多个阶段，中断后需要沿用已有任务，避免重复提交。
+- **凭据与计费需要自主管理**：客户希望使用自己的方舟 Key，并在自己的火山账号下管理模型权限、用量和费用。
+- **长任务恢复困难**：视频生成、轮询、下载和归档跨越多个阶段，中断后需要续跑原任务，避免重复提交和重复计费。
 
-本方案通过 Terraform 交付基础设施与业务源码，由 ECS 开机自动安装服务。方舟 Key 通过服务端凭据机制加载；官方 Partner Nodes 禁用，流程无需 Comfy 账号或积分。
+客户希望在自己的火山账号下使用 Seedance 文生视频，但 ComfyUI、方舟节点、业务后端与存储需分别部署，接入繁琐，凭据和计费难以自主管理，长任务中断后也难以续跑。本方案用 Terraform 创建 VPC、ECS、TOS 和实例角色并交付源码，ECS 首次开机自动安装全部服务；客户填入方舟 Key 后即可在公网画布使用「火山方舟视频生成」节点，凭据、数据和费用都留在客户账号内。
 
 ## 2. 方案概述
 
-Terraform 创建网络、ECS、TOS 和实例角色。ECS 首次开机下载并校验固定版本的官方 ComfyUI，安装前端与 CPU 运行依赖，通过 systemd 启动 ComfyUI、业务后端、Worker 和 PostgreSQL。自定义节点经本机 HTTP 调用业务后端，沿用提交、轮询、下载、错误处理和 TOS 上传队列。
+Terraform 创建网络、ECS、TOS 和实例角色。ECS 首次开机下载并校验指定版本的官方 ComfyUI，安装前端与 CPU 版运行依赖，通过 systemd 启动 ComfyUI、业务后端、Worker 和 PostgreSQL。自定义节点通过本机 HTTP 接口调用业务后端，复用提交、轮询、下载、错误处理和 TOS 上传队列。
 
 ```mermaid
 %%{init: {"flowchart": {"wrappingWidth": 300, "nodeSpacing": 35, "rankSpacing": 60, "padding": 14}}}%%
 flowchart TB
   Browser["浏览器 · 官方画布"]
-  Source["TOS Bucket + Object · 源码交付<br/>私有桶；分片 N + 清单 1 为公开读<br/>仅包含本工程的业务代码与安装配置"]
-  Upstream["GitHub / Python 包源<br/>官方 ComfyUI、前端包与固定依赖"]
+  Source["TOS Bucket + Object · 源码交付<br/>私有桶；分片 N 个与清单 1 个为公开只读<br/>仅包含本方案的业务代码与安装配置"]
+  Upstream["GitHub / Python 包源<br/>官方 ComfyUI、前端包与锁定版本依赖"]
   IAM["IAM Role + Policy · ECS 实例角色<br/>限定私有媒资桶的访问权限"]
 
   subgraph Network["VPC + Subnet · 独立 /24 应用网段"]
     SG["Security Group · 入站来源控制<br/>Web 80/443；SSH 22"]
-    ECS["CPU ECS · 完整应用<br/>Nginx：工作室登录与反向代理<br/>ComfyUI：官方前后端 + 方舟节点<br/>业务 API / Worker / 本机 PostgreSQL<br/>系统盘：持久任务与 SaveVideo 输出 MP4"]
+    ECS["CPU ECS · 完整应用<br/>Nginx：工作台登录与反向代理<br/>ComfyUI：官方前后端 + 方舟节点<br/>业务 API / Worker / 本机 PostgreSQL<br/>系统盘：持久任务与 SaveVideo 输出 MP4"]
   end
 
   Ark["火山方舟 Seedance · 视频生成<br/>客户方舟 Key 认证与计费"]
-  Assets["TOS Bucket · 私有媒资归档<br/>默认启用版本控制<br/>TOS CORS：允许来源非空时创建 1 个"]
-  Note["实线：业务请求 / 数据流<br/>虚线：边标签所示的依赖 / 安装 / 配置<br/>EIP、主网卡、系统盘为 ECS 内嵌配置<br/>time_sleep：ECS 删除后、删安全组前等待"]
+  Assets["TOS Bucket · 私有媒资归档<br/>默认启用版本控制<br/>TOS CORS：配置允许来源时创建 1 条规则"]
+  Note["实线：业务请求 / 数据流<br/>虚线：边标签所示的依赖 / 安装 / 配置<br/>EIP、主网卡、系统盘为 ECS 内嵌配置<br/>time_sleep：销毁时等待网卡释放"]
 
   Browser -->|"公网 EIP / HTTP(S)"| ECS
   Source -.->|"创建依赖；开机下载并校验"| ECS
@@ -77,14 +77,14 @@ flowchart TB
 
 自动交付且未配置 CORS 时，共 N + 9 个云资源和 1 个等待对象。当前源码对应 N = 7；当前 `terraform.tfvars` 示例的 `cors_allowed_origins = []`，因此共 16 个云资源、17 个 Terraform 管理对象。源码变化后，N 以执行计划及 `source_delivery.chunk_count` 为准。EIP、系统盘、主网卡和角色关联为 ECS 内嵌配置，不另计独立资源；PostgreSQL、数据库账号、Web 登录密码和应用服务由 ECS 安装器创建。本工程没有 Data Source 或子模块；镜像、密钥模式所需的密钥对、云项目和方舟模型权限由部署者提前准备。
 
-源码交付固定自动执行，无需用户填写交付开关或源码下载地址：
+源码交付始终自动执行，无需填写交付开关或源码下载地址：
 
 1. 平台执行 Terraform，将当前模板中的自定义节点、认证扩展、业务后端、示例工作流和安装配置编码上传至 TOS。
 2. ECS 首次开机自动下载并校验这些业务文件，然后安装、启动完整服务。
 
-官方 ComfyUI 源码、官方前端包、PyTorch 和其他运行依赖不包含在本工程中。官方版本、下载地址和校验值固定在 `scripts/comfyui-release.json`，Python 依赖版本固定在 `scripts/comfyui-requirements.txt` 和 `backend/requirements.txt`；ECS 按这些配置在线下载安装。无需提前下载、打包或上传依赖。
+官方 ComfyUI 源码、官方前端包、PyTorch 和其他运行依赖不包含在本工程中。官方版本、下载地址和校验值锁定在 `scripts/comfyui-release.json`，Python 依赖版本锁定在 `scripts/comfyui-requirements.txt` 和 `backend/requirements.txt`；ECS 按这些配置在线下载安装。无需提前下载、打包或上传依赖。
 
-源码桶和媒资桶的桶 ACL 均为私有；仅自动交付的源码分片和清单为公开读，不能包含凭据或业务素材。`ark_api_key` 必须直接通过 Terraform 敏感参数传入，安装器将其写入 ECS 的 `/opt/ai-animation/secrets/ark_api_key`，权限为 `0600`。Key 会进入 Terraform State、保存的 Plan 和 ECS User Data；`sensitive` 仅隐藏常规界面的显示，不会从这些数据中移除秘密。密码模式的 `ecs_password` 也会进入 State 和 Plan。
+源码桶和媒资桶的桶 ACL 均为私有；仅自动交付的源码分片和清单为公开只读，其中不包含凭据或业务素材。`ark_api_key` 必须直接通过 Terraform 敏感参数传入，安装器将其写入 ECS 的 `/opt/ai-animation/secrets/ark_api_key`，权限为 `0600`。Key 会进入 Terraform State、保存的 Plan 和 ECS User Data；`sensitive` 仅隐藏常规界面的显示，不会从这些数据中移除秘密。密码模式的 `ecs_password` 也会进入 State 和 Plan。
 
 ### 3.2 工程结构
 
@@ -107,7 +107,7 @@ flowchart TB
 │   ├── deploy-local.py          # 凭据文件注入与完整 Terraform apply
 │   ├── install-comfyui.py       # 官方源码校验、CPU 依赖与扩展安装
 │   ├── comfyui-release.json
-│   ├── comfyui-requirements.txt # 工作室的固定 Python 依赖
+│   ├── comfyui-requirements.txt # 工作台锁定版本的 Python 依赖
 │   ├── ecs-bootstrap.sh         # ECS 安装入口
 │   ├── ecs-deploy.py            # 下载、合并和校验源码
 │   ├── ecs-native.py            # 数据库与 systemd 服务安装
@@ -129,7 +129,7 @@ flowchart TB
 └── README.zh-CN.md               # 中文说明
 ```
 
-本工程包含业务扩展、登录入口、固定开源组件清单和 `terraform.tfvars`；部署前将环境参数替换为目标账号的配置。官方前端由 ComfyUI 安装依赖提供，无需 npm 构建。`terraform.tfvars` 不进入自动交付的源码文件集合；State、Plan、`.env`、`secrets/`、`config/runtime.json`、`data/` 和 `work/` 同样不进入源码交付集合。部署与运维步骤见第 4 节。
+本工程包含业务扩展、登录入口、锁定版本的开源组件清单和 `terraform.tfvars`；部署前将环境参数替换为目标账号的配置。官方前端由 ComfyUI 安装依赖提供，无需 npm 构建。`terraform.tfvars` 不进入自动交付的源码文件集合；State、Plan、`.env`、`secrets/`、`config/runtime.json`、`data/` 和 `work/` 同样不进入源码交付集合。部署与运维步骤见第 4 节。
 
 `compose.yaml`、`compose.dev.yaml` 和各目录中的 Dockerfile 用于本地容器开发，不参与 ECS 原生安装；第 4.2 节的“本地部署”指在本机执行 Terraform 创建云端环境。
 
@@ -159,7 +159,7 @@ resource "volcenginecc_tos_object" "source" {
 
 ## 4. 使用说明
 
-本工程支持通过 InfraManager 在云上一键部署或下载模板在本地运行。推荐使用云上部署方式，无需自行准备 Terraform 运行环境，只需在平台填写参数即可完成资源创建和托管。
+本工程支持通过 InfraManager 在云上一键部署，或下载模板后在本地执行 Terraform 部署。推荐使用云上部署方式，无需自行准备 Terraform 运行环境，只需在平台填写参数即可完成资源创建和托管。
 
 ### 4.1 云上部署
 
@@ -177,17 +177,17 @@ InfraManager 是火山引擎提供的 Terraform 托管工作台，更多产品�
 
 新 ECS 开机时自动安装，依赖包由公开源提供。ComfyUI 源码从 GitHub 下载并校验 SHA-256，失败时重试并尝试 GitHub 的归档直链。CPU PyTorch 先用上海交大镜像，失败后切换官方 CPU 源。普通 Python 包先用火山镜像，失败后依次切换清华镜像和官方 PyPI；每个源的完整安装上限为 30 分钟，单次网络读取超时为 20 秒，并保留下载缓存供自动重试使用。ECS 还需要访问 TOS、Ubuntu 软件源和方舟 HTTPS 接口。
 
-当前固定 ComfyUI `0.44.0` 和官方前端包 `comfyui-frontend-package==1.57.6`。运行依赖不安装官方示例工作流包、模板媒体包和内置节点文档包；本工程的示例工作流另随自定义节点安装。版本与下载配置见 `scripts/comfyui-release.json`，无需提前上传依赖包。
+当前锁定 ComfyUI `0.44.0` 和官方前端包 `comfyui-frontend-package==1.57.6`。运行依赖不安装官方示例工作流包、模板媒体包和内置节点文档包；本工程的示例工作流另随自定义节点安装。版本与下载配置见 `scripts/comfyui-release.json`，无需提前上传依赖包。
 
 #### 4.1.2 选择模板
 
-打开 [InfraManager 控制台](https://console.volcengine.com/iac)，进入 **模板管理 > 公开模板**，搜索“自部署 ComfyUI 火山方舟视频生成”。
+打开 [InfraManager 控制台](https://console.volcengine.com/iac)，进入 **模板管理 > 公开模板**，搜索“一键部署 ComfyUI 及并使用 Seedance 文生视频”。
 
-上述搜索入口适用于模板已公开上架的情况，本文未确认上架状态。自定义导入时，按平台支持的格式上传当前完整工程，保留根目录 Terraform、`backend/`、`frontend/`、`scripts/` 和 `workflows/` 的相对目录结构。仅导入 `.tf` 文件无法完成应用安装。
+若在公开模板中暂未找到，可通过自定义导入上传完整工程：按平台支持的格式保留根目录 Terraform、`backend/`、`frontend/`、`scripts/` 和 `workflows/` 的相对目录结构。仅导入 `.tf` 文件无法完成应用安装。
 
-当前工程文件就是最终模板内容，不需要运行单独的打包脚本，也不需要预先上传源码包或依赖包。平台部署会从工程文件自动交付自定义业务源码。
+当前工程文件即完整模板内容，不需要运行单独的打包脚本，也不需要预先上传源码包或依赖包。平台部署会从工程文件自动交付自定义业务源码。
 
-官方 ComfyUI 源码、前端安装包、PyTorch 和虚拟环境不在本工程中；它们由 ECS 按固定配置下载。源码交付集合也排除本地参数、State、Plan、密钥、媒体和回归测试。部署参数在平台填写，见第 4.2.1 节。修改源码后重新导入完整工程，并重新生成执行计划。
+官方 ComfyUI 源码、前端安装包、PyTorch 和虚拟环境不在本工程中；它们由 ECS 按锁定配置下载。源码交付集合也排除本地参数、State、Plan、密钥、媒体和回归测试。部署参数在平台填写，见第 4.2.1 节。修改源码后重新导入完整工程，并重新生成执行计划。
 
 #### 4.1.3 创建资源栈
 
@@ -195,11 +195,11 @@ InfraManager 是火山引擎提供的 Terraform 托管工作台，更多产品�
 
 参数说明见第 4.2.1 节。必须提供 `zone_id`、`image_id`、`instance_type`、`bucket_name`、`ssh_allowed_cidrs`、`ark_api_key` 和登录模式对应的 ECS 凭据。
 
-密钥模式填写已有 `ssh_key_pair_name`，将 `ecs_password` 留空；密码模式将密钥对名称留空，通过敏感参数提供真实 `ecs_password`。当前本地参数文件采用密码模式。配置 `web_allowed_cidrs` 后才开放公网 80/443；空集合保留 SSH 隧道访问。
+密钥模式填写已有 `ssh_key_pair_name`，将 `ecs_password` 留空；密码模式将密钥对名称留空，通过敏感参数提供真实 `ecs_password`。工程自带的参数示例采用密码模式。配置 `web_allowed_cidrs` 后才开放公网 80/443；空集合保留 SSH 隧道访问。
 
 部署独立新环境时，为 `name_prefix` 和 `bucket_name` 使用未占用的名称，避免与已有 IAM 角色、策略或全局桶名冲突。检查计划中的分片数量、桶名、来源 CIDR、角色权限以及删除或替换动作，再执行部署。
 
-一次 Apply 创建资源并交付源码；ECS 随后自动安装应用。Terraform/资源栈成功不等待应用 `ready`，也不等于已经通过网页登录或视频生成验证。不要因为网页尚未启动而立即重复 Apply，先按第 4.1.4 节查看安装状态。
+一次 Apply 创建资源并交付源码；ECS 随后自动安装应用。Terraform 执行成功只代表资源已创建，不代表应用已就绪，也不等于通过网页登录或视频生成验证。不要因为网页尚未启动而立即重复 Apply，先按第 4.1.4 节查看安装状态。
 
 #### 4.1.4 部署验证
 
@@ -213,11 +213,11 @@ InfraManager 是火山引擎提供的 Terraform 托管工作台，更多产品�
 | `application_access` | 公网 URL、SSH 隧道、配置和证书路径、状态与日志命令 |
 | `source_delivery` | 交付模式、桶、对象键、源码 SHA256、公开清单地址及分片数 |
 
-这些输出均未声明为敏感输出，不返回登录密码或 API Key，但包含资源地址和运行配置。当前示例为 16 个云资源、17 个 Terraform 管理对象；内容或参数变更后的数量见第 4.2.3 节。`web_allowed_cidrs` 为空时公网 URL 为 `null`。
+这些输出不包含登录密码或 API Key，但包含资源地址和运行配置，请勿公开分享。当前示例为 16 个云资源、17 个 Terraform 管理对象；内容或参数变更后的数量见第 4.2.3 节。`web_allowed_cidrs` 为空时公网 URL 为 `null`。
 
-在资源栈的资源页签打开 ECS 详情，核对其关联的 VPC、子网、安全组和实例角色；在 TOS 控制台核对媒资桶为私有、版本控制与 `bucket_versioning` 一致，源码桶为私有且只有业务源码分片和清单公开读。配置了 `cors_allowed_origins` 时，再核对对应 CORS 规则。
+在资源栈的资源页签打开 ECS 详情，核对其关联的 VPC、子网、安全组和实例角色；在 TOS 控制台核对媒资桶为私有、版本控制与 `bucket_versioning` 一致，源码桶为私有且只有业务源码分片和清单公开只读。配置了 `cors_allowed_origins` 时，再核对对应 CORS 规则。
 
-ECS 首次开机的安装顺序为：从 TOS 获取业务源码 → 安装业务后端依赖 → 从 GitHub 获取 ComfyUI 源码 → 安装 CPU PyTorch、官方前端和其他依赖 → 配置数据库与服务 → 启动并检查服务。下载和安装都在 ECS 内进行，耗时随软件源、网络和实例配置变化，不以固定分钟数判定完成。
+ECS 首次开机的安装顺序为：从 TOS 获取业务源码 → 安装业务后端依赖 → 从 GitHub 获取 ComfyUI 源码 → 安装 CPU PyTorch、官方前端和其他依赖 → 配置数据库与服务 → 启动并检查服务。下载和安装都在 ECS 内进行，耗时随软件源、网络和实例配置变化，请以实际状态为准，不要按固定时长判断。
 
 从 `infrastructure.instance_id` 定位 ECS，在 ECS 控制台终端或 SSH 会话中执行：
 
@@ -234,11 +234,11 @@ curl --fail --silent --show-error --max-time 15 http://127.0.0.1:8080/studio-api
 | --- | --- |
 | `initializing`、`downloading` | 初始化或从 TOS 获取业务源码，检查源码地址和下载日志 |
 | `configuring_secret` | 检查服务端方舟 Key 文件 |
-| `starting` | 包含 ComfyUI 源码下载、依赖安装、数据库配置及服务启动，并非只在启动进程；结合实时日志判断进展 |
+| `starting` | 包含 ComfyUI 源码下载、依赖安装、数据库配置及服务启动，并不只代表进程启动；请结合实时日志判断进展 |
 | `ready` | 安装器的服务、数据库健康、Worker 心跳及节点加载检查通过，可以继续网页和业务验证 |
 | `failed_...` | 某阶段安装失败，查看同一文件中的 `error_code` 和安装日志；底层 cloud-init 出错时该文件也可能尚未生成 |
 
-某个源下载失败或缺少固定版本包时，脚本会重试或换源，后续成功可继续安装。所有候选源均失败才由安装器记录失败；安装服务配置为失败后 60 秒自动重试，单次服务执行上限为 3600 秒。应用安装失败不会回传为 Terraform Apply 失败。
+某个源下载失败或缺少指定版本包时，脚本会重试或换源，后续成功可继续安装。所有候选源均失败才由安装器记录失败；安装服务配置为失败后 60 秒自动重试，单次服务执行上限为 3600 秒。应用安装失败不会回传为 Terraform Apply 失败。
 
 实时查看安装日志：
 
@@ -255,9 +255,9 @@ sudo systemctl status ai-animation.service ai-animation-api.service ai-animation
 sudo journalctl -u ai-animation.service -u ai-animation-api.service -u ai-animation-worker.service -u ai-animation-comfyui.service -n 100 --no-pager
 ```
 
-更新 Ark Key 时应更新平台敏感参数并查看 Terraform Plan。修改 ECS User Data 不会让已有实例自动重跑 cloud-init；若实例未替换，需要通过受控运维流程更新 `/opt/ai-animation/secrets/ark_api_key` 并重启 API 和 Worker 服务。不要把密钥写进命令参数或日志。
+更新 Ark Key 时，先更新平台敏感参数并查看 Terraform Plan；但修改 ECS User Data 不会让已有实例自动重跑 cloud-init，若实例未替换，仍需通过受控运维流程更新 `/opt/ai-animation/secrets/ark_api_key`，并重启 API 和 Worker 服务。不要把密钥写进命令参数或日志。
 
-在受控终端读取工作室登录密码：
+在受控终端读取工作台登录密码：
 
 ```bash
 sudo cat /opt/ai-animation/secrets/owner_password
@@ -274,15 +274,15 @@ sudo cat /opt/ai-animation/secrets/owner_password
 1. 点击左侧「模板」，在扩展分类选择 `ai_animation`，再打开 `ark-text-to-video`。这会新建一个工作流标签页，画布中已连接「火山方舟视频生成」和「保存视频（SaveVideo）」两个节点。也可将工程中的 `workflows/ark-text-to-video.json` 拖入画布，或手工添加这两个节点并连接 `VIDEO` 端口。
 2. 在生成节点填写提示词。示例使用 4 秒、16:9、720p，模型从当前节点列表选择且需已开通权限；`generate_audio` 和 `watermark` 按需设置。节点里不填写 Key，左侧模型库也无需下载本地权重。
 3. `SaveVideo` 保持 `mp4`、`auto` 即可。工作流操作菜单中的「保存」只保存节点、连线和参数；点击右上角官方「运行」才提交视频任务。顶部批次数量保持 `1`，生成节点的 `generation_id` 保持 `1`。Comfy 官方账号登录入口与本流程无关，无需登录官方账号或充值积分。
-4. 点击一次「运行」后，等待后台生成、下载和私有 TOS 归档；无需再去其他页面点击执行。这一步会使用客户方舟 Key 并产生模型用量费用。完成后，生成节点和保存节点应出现视频预览，`SaveVideo` 将 MP4 写入 ECS 的 `/opt/ai-animation/work/comfyui/output/`，可从预览菜单下载。
+4. 点击一次「运行」后，等待后台生成、下载和私有 TOS 归档；无需前往其他页面再次执行。这一步会使用客户方舟 Key 并产生模型用量费用。完成后，生成节点和保存节点应出现视频预览，`SaveVideo` 将 MP4 写入 ECS 的 `/opt/ai-animation/work/comfyui/output/`，可从预览菜单下载。
 5. 保持 `generation_id` 和其他参数再次运行，预期复用同一业务任务与方舟 Task ID。想用相同参数生成新视频时再将 `generation_id` 改为 `2`；顶部批次数量与生成批次不是同一项设置。
 6. 中断或页面断开后，保持原参数和生成批次再次运行以查询原任务。节点报错时先查看任务编号和错误信息；提交结果不确定时先在方舟核对原 Task ID，再按第 4.3 节恢复，避免重复提交。
 
-上述为操作步骤和预期结果；真实模型权限、视频内容、归档和下载仍需在目标账号验证。在 TOS 控制台核对媒资桶中的 `media/` 对象为私有，再按第 4.4 节确认数据保留范围。完整环境的清理见第 4.2.5 节。
+上述为操作步骤和预期结果；模型权限、生成内容、归档与下载效果仍需在目标账号中验证。在 TOS 控制台核对媒资桶中的 `media/` 对象为私有，再按第 4.4 节确认数据保留范围。完整环境的清理见第 4.2.5 节。
 
 ### 4.2 本地部署
 
-您也可以下载本工程模板在本地运行，需要按照下述步骤操作。
+您也可以下载本工程后在本地执行 Terraform 部署，按以下步骤操作。
 
 以下 Terraform 命令在 macOS、Linux 或 WSL 的本项目根目录执行，用于部署云端资源；ECS 状态检查和密钥配置仍在 ECS 终端执行。
 
@@ -295,7 +295,7 @@ python3 scripts/deploy-local.py \
   --work-dir "/absolute/path/to/deployment-state"
 ```
 
-仅此可选本地脚本需要 Python 3、Terraform 和已有 AK 模式 Profile；平台部署不需要运行它。将示例路径替换为工程外的凭据文件和独立部署目录；不指定 `--cloud-config` 时读取 `~/.volcengine/config.json`，可用 `--profile` 选择其中的 Profile。密钥模式省略 `--ecs-password-file`，凭据文件的值不应同时写入 `terraform.tfvars`。
+只有这个可选脚本需要 Python 3、Terraform 和已有的 AK 模式 Profile；平台部署不需要运行它。将示例路径替换为工程外的凭据文件和独立部署目录；不指定 `--cloud-config` 时读取 `~/.volcengine/config.json`，可用 `--profile` 选择其中的 Profile。密钥模式省略 `--ecs-password-file`，凭据文件的值不应同时写入 `terraform.tfvars`。
 
 脚本会执行一次完整 Apply，不在 Apply 前再次交互确认；计划包含删除或替换时会停止。State、Plan、日志和输出写入 `--work-dir` 指定的工程外目录，权限为 `0700`；后续输出、更新和销毁均在同一目录执行。重复运行使用该目录中的 State，失败时保留 State 且不自动重跑 Apply；脚本没有额外的整轮超时，`Ctrl+C` 中断后先核对云资源和日志，再决定如何恢复。
 
@@ -331,7 +331,7 @@ export TF_VAR_ecs_password="<strong-password>"
 
 **重点参数**：
 
-核对本地 `terraform.tfvars`，按目标账号调整；使用未包含此文件的完整工程时，可按下表新建参数文件。默认值来自 `variables.tf`。当前示例采用 `password` 登录、100 GiB `ESSD_FlexPL` 系统盘、10 Mbps EIP、`Enabled` 版本控制及空 CORS 集合，并各配置 1 个 SSH 与 Web 来源 CIDR。示例的 SSH 和 Web 来源均为 `0.0.0.0/0`（全公网），部署前应按管理员和用户的实际来源收窄。这些示例值不改变变量定义默认值：
+核对本地 `terraform.tfvars`，按目标账号调整；使用未包含此文件的完整工程时，可按下表新建参数文件。默认值来自 `variables.tf`。当前示例采用 `password` 登录、100 GiB `ESSD_FlexPL` 系统盘、10 Mbps EIP、`Enabled` 版本控制及空 CORS 集合，并各配置 1 个 SSH 与 Web 来源 CIDR。示例的 SSH 和 Web 来源均为 `0.0.0.0/0`（全公网），部署前应按管理员和用户的实际来源收窄。示例值不会改变变量的默认值：
 
 | 参数 | 默认值 / 入口 | 说明 |
 | --- | --- | --- |
@@ -356,13 +356,13 @@ export TF_VAR_ecs_password="<strong-password>"
 | `cors_allowed_origins` | `[]` | 精确浏览器 Origin；空值不创建 CORS |
 | `ark_api_key` | 必填，敏感 | 方舟 API Key；直接传入后端密钥文件，并进入 Terraform State |
 | `ark_base_url` | `https://ark.cn-beijing.volces.com/api/v3` | 方舟 API 地址 |
-| `script_model_id` | `doubao-seed-2-1-pro-260628` | 历史项目接口的默认剧本模型；文生视频节点不调用 |
-| `video_model_id` | `doubao-seedance-2-0-260128` | 历史项目接口的默认视频模型；新节点在画布中选择模型 |
+| `script_model_id` | `doubao-seed-2-1-pro-260628` | 旧版项目接口的默认剧本模型；文生视频节点不调用 |
+| `video_model_id` | `doubao-seedance-2-0-260128` | 旧版项目接口的默认视频模型；新节点在画布中选择模型 |
 | `media_url_ttl_seconds` | `900` | 素材签名地址有效期，整数 60–3600 秒；实例角色凭据剩余有效期不足时自动缩短 |
 
 两种登录凭据互斥：密钥模式只填写密钥对名称，密码模式只填写密码。`ark_api_key` 必须通过平台敏感参数或 `TF_VAR_ark_api_key` 提供。自动加载的 `terraform.tfvars` 优先于 `TF_VAR_*`；通过环境变量注入参数时，不要在参数文件中为同名变量赋值。
 
-CPU ECS 运行官方 ComfyUI 界面和自定义节点，模型计算由方舟完成。模板固定使用客户的 Ark Key 调用方舟，无需额外的远程 ComfyUI 地址、工作流契约或认证密钥。本机官方 ComfyUI 由 ECS 自动安装并启动。
+ECS 运行官方 ComfyUI 界面和自定义节点，模型计算由方舟完成。模板仅使用客户的 Ark Key 调用方舟，无需额外配置远程 ComfyUI 地址、工作流协议或认证密钥；ComfyUI 由 ECS 自动安装并启动。
 
 #### 4.2.2 场景化部署示例
 
@@ -395,9 +395,9 @@ terraform show deploy.tfplan
 terraform apply deploy.tfplan
 ```
 
-一次 Apply 创建基础设施、自动上传当前业务源码并触发 ECS 安装；ECS 再在线下载固定版本的官方 ComfyUI 和运行依赖。无需额外选择交付方式或手工准备依赖包。等待应用状态为 `ready` 后，再从公网登录、运行示例工作流。
+一次 Apply 创建基础设施、自动上传当前业务源码并触发 ECS 安装；ECS 再在线下载指定版本的官方 ComfyUI 和运行依赖。无需额外选择交付方式或手工准备依赖包。等待应用状态为 `ready` 后，再从公网登录、运行示例工作流。
 
-已有环境变更前应检查删除及替换动作。修改 ECS User Data 不会在已有主机自动重跑 cloud-init；新版本的一次部署验收应使用新资源栈和无缓存的新 ECS。
+已有环境变更前应检查删除及替换动作。修改 ECS User Data 不会在已有主机自动重跑 cloud-init；新版本的部署验收应使用新资源栈和全新的 ECS。
 
 场景二：已有 ECS 密钥对，仅通过 SSH 隧道访问工作台。在基础参数文件中替换以下设置，并使用密钥对对应的私钥连接 ECS：
 
@@ -421,7 +421,7 @@ terraform apply deploy.tfplan
 
 #### 4.2.3 部署预期结果
 
-固定自动交付创建 N + 9 个云资源，`time_sleep` 另计 1 个。当前源码分片 N = 7，示例的 CORS 集合为空：
+自动交付共创建 N + 9 个云资源，`time_sleep` 另计 1 个。当前源码分片 N = 7，示例的 CORS 集合为空：
 
 | 场景 | 云资源数 | Terraform 管理对象总数 |
 | --- | ---: | ---: |
@@ -443,7 +443,7 @@ terraform output -json source_delivery
 
 #### 4.2.4 部署后验证
 
-从第 4.2.3 节的 `infrastructure.instance_id` 和 `application_access` 定位 ECS 与访问入口，按第 4.1.4 节等待应用 `ready` 并验收工作室。确认源码清单及 SHA256 对应本次上传的工程，安全组只允许指定来源访问 22/80/443，数据库与 API 端口未公开。
+从第 4.2.3 节的 `infrastructure.instance_id` 和 `application_access` 定位 ECS 与访问入口，按第 4.1.4 节等待应用 `ready` 并验收工作台。确认源码清单及 SHA256 对应本次上传的工程，安全组只允许指定来源访问 22/80/443，数据库与 API 端口未公开。
 
 使用 `scripts/deploy-local.py` 时，先切换到部署时的 `--work-dir` 目录再执行本节的 Terraform 命令；不要在工程根目录另建一份 State。公网场景验证 80/443 登录及画布，隧道场景使用 `application_access.ssh_tunnel_command` 验证本地入口；两种场景均应检查服务健康、节点加载和所需的方舟业务效果。
 
@@ -484,21 +484,21 @@ terraform state list
 
 ### 4.3 任务复用与恢复
 
-- 同一生成批次和相同参数只创建一个业务视频任务。Worker 保存方舟 Task ID 后持续查询原任务，下载失败或 TOS 上传失败均沿用原素材。
-- `GET /studio-api/ark/videos/<job_id>` 返回任务状态、原 Task ID、错误和素材编号，需工作室登录。
+- 同一生成批次和相同参数只创建一个业务视频任务。Worker 保存方舟 Task ID 后持续查询原任务，下载或 TOS 上传失败时复用原任务结果重试，不重新生成。
+- `GET /studio-api/ark/videos/<job_id>` 返回任务状态、原 Task ID、错误和素材编号，需工作台登录。
 - 提交结果不确定时先在方舟核对，通过 `POST /studio-api/jobs/<job_id>/recover` 提供 `external_id` 恢复；已明确终止的模型任务需显式提供 `acknowledge_duplicate_cost=true` 才能重新生成，可能再次计费。
-- TOS 上传失败时，通过 `POST /studio-api/assets/<asset_id>/backup/retry` 仅恢复归档。修改请求需要登录会话和 `x-csrf-token`，JSON 正文使用原有接口契约。
-- 原有项目、剧本、分镜和拼接接口以及旧节点保留，供已有工作流与历史数据读取使用。默认界面进入官方画布。
+- TOS 上传失败时，通过 `POST /studio-api/assets/<asset_id>/backup/retry` 仅恢复归档。修改请求需要登录会话和 `x-csrf-token`，JSON 正文沿用原有接口格式。
+- 旧版项目、剧本、分镜和拼接接口及节点仍保留，用于兼容已有工作流和历史数据。默认界面进入官方画布。
 
 ### 4.4 素材备份与运行检查
 
-云端默认启用 `storage.auto_upload=true`，目标来自 `bucket_name`，不是写死的桶名。备份覆盖已归档的新旧分镜视频、成片、模型结束帧、抽取参考帧、上传图片和选帧预览视频。
+云端默认启用 `storage.auto_upload=true`，目标来自 `bucket_name`，不是写死的桶名。备份覆盖新旧分镜视频、成片、模型结束帧、抽取参考帧、上传图片和选帧预览视频。
 
-对象位于 `media/<project_id>/<asset_id>/`，使用私有 ACL、AES256 和 SDK CRC 校验；上传后 HEAD 校验大小及 SHA256 元数据。备份队列独立于模型任务，失败不会重生成视频，重试间隔从 30 秒增长至最多 30 分钟；Worker 中断后可在租约到期后恢复。归档完成后节点才返回视频，归档失败时沿用原素材恢复上传。
+对象位于 `media/<project_id>/<asset_id>/`，使用私有 ACL、AES256 和 SDK CRC 校验；上传后 HEAD 校验大小及 SHA256 元数据。备份队列独立于模型任务，失败不会重生成视频，重试间隔从 30 秒增长至最多 30 分钟；Worker 中断后，任务锁到期会自动恢复。归档完成后节点才返回视频，归档失败时仍用原素材重试上传。
 
 ECS 使用实例角色获取临时凭据，优先访问 TOS 内网 HTTPS Endpoint。开发机需要真实上传时再配置桶、地域、Endpoint 及后端密钥文件 `TOS_ACCESS_KEY_FILE`、`TOS_SECRET_KEY_FILE`；临时凭据另配 `TOS_SESSION_TOKEN_FILE`。
 
-新节点等待 TOS 归档完成后，通过鉴权接口将视频下载到 ComfyUI 临时目录，以标准预览和保存节点提供给浏览器。原素材访问接口仍可签发短期 TOS 地址，默认有效期为 900 秒，可通过 `media_url_ttl_seconds` 调整。
+节点会等待 TOS 归档完成，再通过鉴权接口将视频下载到 ComfyUI 临时目录，供官方预览和保存节点使用。原素材访问接口仍可签发短期 TOS 地址，默认有效期为 900 秒，可通过 `media_url_ttl_seconds` 调整。
 
 选帧或拼接需要本地文件时，后端可从 TOS 下载缺失缓存；这依赖数据库中仍保留的素材记录和有效 TOS 对象。TOS 只持久化媒体，不备份项目数据库、密钥或运行配置。ECS 数据位置：
 
@@ -510,7 +510,7 @@ ECS 使用实例角色获取临时凭据，优先访问 TOS 内网 HTTPS Endpoin
 | ComfyUI 保存的 MP4 | `/opt/ai-animation/work/comfyui/output/` |
 | 运行配置 | `/opt/ai-animation/config/runtime.json` |
 | 密钥 | `/opt/ai-animation/secrets/` |
-| 工作室登录密码 | `/opt/ai-animation/secrets/owner_password` |
+| 工作台登录密码 | `/opt/ai-animation/secrets/owner_password` |
 | 安装状态 | `/opt/ai-animation/deployment-status.json` |
 
 在 ECS 上检查运行状态：
@@ -523,7 +523,7 @@ sudo journalctl -u ai-animation-worker.service -n 100 --no-pager
 
 确认服务为 `active`、健康接口返回 `{"status":"ok"}`，再核对节点结果、任务查询中的备份状态和 Worker 日志。数据库迁移通过 PostgreSQL advisory lock 串行执行，当前 schema 为 `6`，包含任务错误详情和独立媒体备份队列。
 
-工作室登录密码由安装器随机生成，保存在 ECS 的 `owner_password` 文件中，不进入数据库；“本机”指 ECS 服务端。API 通过 systemd 凭据加载密码，正常重启不会重新生成。修改密码时在 ECS 执行：
+工作台登录密码由安装器随机生成，保存在 ECS 的 `owner_password` 文件中，不进入数据库；上文路径中的“本机”均指 ECS 实例。API 通过 systemd 凭据加载密码，正常重启不会重新生成。修改密码时在 ECS 执行：
 
 ```bash
 sudoedit /opt/ai-animation/secrets/owner_password
@@ -538,10 +538,8 @@ sudo systemctl restart ai-animation-api.service
 
 ## 5. 总结
 
-- Terraform 自动交付自定义源码，ECS 开机安装固定版本的 ComfyUI 与业务服务，平台侧无需另行准备安装脚本运行环境。
+- Terraform 自动交付自定义源码，ECS 开机安装指定版本的 ComfyUI 与业务服务，平台侧无需另行准备安装脚本运行环境。
 - 客户通过官方画布调用自己的方舟 Key，标准 `VIDEO` 输出接通预览与 `SaveVideo`，模型用量归属客户账号。
 - PostgreSQL 保留任务状态，Worker 复用原方舟 Task ID，媒体通过私有 TOS 归档。
 
-当前画布入口完成文生视频。节点使用客户的方舟 Key，官方 Partner Nodes 持续禁用。模型权限和模型输出内容由目标方舟账号及服务决定。ComfyUI 标准保存节点在 ECS 本地保存 MP4，原业务素材同时通过私有 TOS 归档。
-
-应用与数据库运行在单台 ECS。媒资归档、数据库、工作流文件和服务端凭据需要按各自的保留要求管理，销毁步骤见第 4.2.5 节。
+当前画布入口完成文生视频。节点使用客户的方舟 Key，官方 Partner Nodes 保持禁用。模型权限和生成内容由目标方舟账号及服务决定。ComfyUI 标准保存节点在 ECS 本地保存 MP4，原业务素材同时通过私有 TOS 归档。

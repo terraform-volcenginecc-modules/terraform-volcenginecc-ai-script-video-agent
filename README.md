@@ -1,26 +1,26 @@
-# Self-hosted ComfyUI with Volcengine Ark Video Generation
+# One-click ComfyUI Deployment and Seedance Text-to-Video Generation
 
-Enter the customer's Ark key during platform deployment and sign in to the public ComfyUI URL with the studio password. Add the **火山方舟视频生成** node, enter a prompt, select a model and video settings, and click the official Run button. The node returns standard `VIDEO`, previews it on the canvas, and connects to the official `SaveVideo` node for MP4 output.
+This template deploys official ComfyUI and the **Volcengine Ark Video Generation** node in the customer's Volcengine account. Enter an Ark key on the platform, sign in to the studio after deployment, add the node, enter a prompt and video settings, and click **Run** to generate a video. Terraform creates the VPC, ECS instance, TOS buckets, instance role and security group. On first boot, ECS automatically installs ComfyUI, the business backend, Worker and PostgreSQL, and configures Nginx login protection and HTTPS. This removes the need to set up the environment and assemble the components manually, enabling Seedance text-to-video generation while keeping credentials, data and billing within the customer's account.
 
 ## 1. Business Background
 
 This template provides a self-hosted ComfyUI canvas and an Ark video node for customers generating Seedance videos through their own Volcengine accounts.
 
 - **Scattered integration steps**: The official canvas, custom nodes, backend and storage require matching configuration. Manual installation can leave components missing.
-- **Unclear credentials and billing ownership**: Customers need to manage model permissions, usage and charges in their own Volcengine accounts using their own Ark keys.
-- **Difficult recovery of long-running tasks**: Generation, polling, downloading and archiving span several stages. Recovery must reuse existing tasks to avoid duplicate submissions.
+- **Credentials and billing need customer control**: Customers want to use their own Ark keys and manage model permissions, usage and charges in their own Volcengine accounts.
+- **Difficult recovery of long-running tasks**: Generation, polling, downloading and archiving span several stages. After an interruption, the original task must resume to avoid duplicate submissions and charges.
 
-Terraform delivers infrastructure and custom source, and ECS installs the services on first boot. Ark keys are loaded through server-side credentials. Official Partner Nodes remain disabled, and the workflow requires no Comfy account or credits.
+Customers want to generate Seedance videos in their own Volcengine accounts, but separately deploying ComfyUI, Ark nodes, the business backend and storage makes integration cumbersome. Managing credentials and billing, and resuming interrupted tasks, also becomes difficult. This solution uses Terraform to create the VPC, ECS instance, TOS buckets and instance role, and to deliver the source code. ECS automatically installs all services on first boot. After providing an Ark key, customers can use the **Volcengine Ark Video Generation** node on the public canvas, with credentials, data and billing remaining in their own accounts.
 
 ## 2. Solution Overview
 
-Terraform provisions networking, ECS, TOS and an instance role. First boot downloads and verifies pinned official ComfyUI source, installs its frontend and CPU dependencies, and starts ComfyUI, the backend, Worker and PostgreSQL through systemd. The node calls the backend over local HTTP and reuses durable submission, polling, download, error handling and TOS upload queues.
+Terraform provisions networking, ECS, TOS and an instance role. On first boot, ECS downloads and verifies the specified version of official ComfyUI, installs its frontend and CPU runtime dependencies, and starts ComfyUI, the business backend, Worker and PostgreSQL through systemd. The custom node calls the business backend over local HTTP and reuses its submission, polling, download, error handling and TOS upload queues.
 
 ```mermaid
 %%{init: {"flowchart": {"wrappingWidth": 300, "nodeSpacing": 35, "rankSpacing": 60, "padding": 14}}}%%
 flowchart TB
   Browser["Browser · official canvas"]
-  Source["TOS Bucket + Object · source delivery<br/>Private bucket; public-read N parts + 1 manifest<br/>Only custom business code and installation configuration"]
+  Source["TOS Bucket + Object · source delivery<br/>Private bucket; N chunks and 1 manifest are public-read<br/>Only this solution's business code and installation configuration"]
   Upstream["GitHub / Python package sources<br/>Official ComfyUI, frontend package and pinned dependencies"]
   IAM["IAM Role + Policy · ECS instance role<br/>Access scoped to the private media bucket"]
 
@@ -30,8 +30,8 @@ flowchart TB
   end
 
   Ark["Volcengine Ark Seedance · video generation<br/>Customer Ark key for authentication and billing"]
-  Assets["TOS Bucket · private media archive<br/>Versioning enabled by default<br/>TOS CORS: 1 only when allowed origins are configured"]
-  Note["Solid: business requests / data flow<br/>Dashed: dependency / installation / configuration as labeled<br/>EIP, primary NIC and system disk are embedded ECS settings<br/>time_sleep: wait after ECS deletion, before security group deletion"]
+  Assets["TOS Bucket · private media archive<br/>Versioning enabled by default<br/>TOS CORS: 1 rule when allowed origins are configured"]
+  Note["Solid: business requests / data flow<br/>Dashed: dependency / installation / configuration as labeled<br/>EIP, primary NIC and system disk are embedded ECS settings<br/>time_sleep: wait for NIC release during destruction"]
 
   Browser -->|"Public EIP / HTTP(S)"| ECS
   Source -.->|"Creation dependency; download and verify on boot"| ECS
@@ -79,12 +79,13 @@ Automatic delivery without CORS creates N + 9 cloud resources and 1 wait object.
 
 Source delivery is always automatic. Users do not select a delivery mode or supply a source download address:
 
-1. Terraform uploads the current template's custom nodes, authentication extension, backend, example workflow and installation configuration to TOS.
-2. On first boot, ECS downloads and verifies these business files, then installs and starts the application.
+1. The platform runs Terraform to encode and upload the current template's custom nodes, authentication extension, business backend, example workflow and installation configuration to TOS.
 
-This project does not contain official ComfyUI source, the official frontend package, PyTorch or other runtime dependencies. `scripts/comfyui-release.json` pins the official version, download URLs and checksum; `scripts/comfyui-requirements.txt` and `backend/requirements.txt` pin Python dependencies. ECS downloads and installs them according to these files. No dependency bundle needs to be prepared or uploaded in advance.
+2. On first boot, ECS automatically downloads and verifies these business files, then installs and starts all services.
 
-Both source and media buckets have private bucket ACLs. Only automatically delivered source chunks and manifests are public-read; they must contain no credentials or business media. The required `ark_api_key` is passed directly as a sensitive Terraform input. The installer writes it to `/opt/ai-animation/secrets/ark_api_key` on ECS with mode `0600`. The key is present in Terraform state, saved plans, and ECS user data; `sensitive` only masks normal display and does not remove the secret from those data stores. In password login mode, `ecs_password` is also present in state and plans.
+This project does not contain official ComfyUI source, the official frontend package, PyTorch or other runtime dependencies. `scripts/comfyui-release.json` pins the official version, download URLs and checksum; `scripts/comfyui-requirements.txt` and `backend/requirements.txt` pin Python dependencies. ECS downloads and installs them according to these files. There is no need to download, package or upload dependencies in advance.
+
+Both source and media buckets have private bucket ACLs. Only automatically delivered source chunks and manifests are public-read; they contain no credentials or business media. The required `ark_api_key` is passed directly as a sensitive Terraform input. The installer writes it to `/opt/ai-animation/secrets/ark_api_key` on ECS with mode `0600`. The key is present in Terraform state, saved plans, and ECS user data; `sensitive` only masks normal display and does not remove the secret from those data stores. In password login mode, `ecs_password` is also present in state and plans.
 
 ### 3.2 Project Structure
 
@@ -129,7 +130,7 @@ Both source and media buckets have private bucket ACLs. Only automatically deliv
 └── README.zh-CN.md               # Chinese documentation
 ```
 
-This project includes business extensions, a login entry point, a pinned component manifest and `terraform.tfvars`. Replace environment parameters before deployment. The official frontend is installed through ComfyUI dependencies without an npm build. `terraform.tfvars`, state, plans, `.env`, `secrets/`, `config/runtime.json`, `data/` and `work/` are excluded from automatic source delivery. Section 4 covers deployment and operations.
+This project includes business extensions, a login entry point, a manifest of pinned open-source components and `terraform.tfvars`. Replace environment parameters with the target account's settings before deployment. The official frontend is installed through ComfyUI dependencies without an npm build. `terraform.tfvars`, state, plans, `.env`, `secrets/`, `config/runtime.json`, `data/` and `work/` are excluded from automatic source delivery. Section 4 covers deployment and operations.
 
 `compose.yaml`, `compose.dev.yaml` and Dockerfiles in the component directories support local container development and are not used by the native ECS installation. In section 4.2, local deployment means running Terraform on a local machine to create a cloud environment.
 
@@ -155,7 +156,7 @@ resource "volcenginecc_tos_object" "source" {
 
 Creation dependencies are `security group → time_sleep.eni_release_wait → ECS`; destruction runs in reverse, with a default 120-second delay to allow asynchronous NIC detachment. No creation delay is configured, and destruction does not invoke Python or shell commands. The wait resource must have been applied to state before a later destroy can execute it.
 
-Chunks use Terraform's default parallelism. Section 4 covers deployment and verification.
+Chunks use Terraform's default parallelism. Review the execution plan before deployment. Section 4 covers deployment and verification.
 
 ## 4. Usage
 
@@ -181,11 +182,11 @@ The current installation pins ComfyUI `0.44.0` and the official frontend package
 
 #### 4.1.2 Select the Template
 
-Open the [InfraManager console](https://console.volcengine.com/iac), go to **Template Management > Public Templates**, and search for “自部署 ComfyUI 火山方舟视频生成”.
+Open the [InfraManager console](https://console.volcengine.com/iac), go to **Template Management > Public Templates**, and search for “一键部署 ComfyUI 及并使用 Seedance 文生视频”.
 
-This search path applies after publication, which this document does not confirm. For custom import, upload the current complete project in a platform-supported format, preserving root Terraform files and the `backend/`, `frontend/`, `scripts/` and `workflows/` directories. Importing only `.tf` files cannot install the application.
+If the template is not yet available in Public Templates, upload the complete project through custom import in a platform-supported format. Preserve the relative directory structure of the root Terraform files and the `backend/`, `frontend/`, `scripts/` and `workflows/` directories. Importing only `.tf` files cannot install the application.
 
-The current project files are the final template contents. There is no separate packaging step and no source or dependency archive to upload in advance. Platform deployment automatically delivers custom business source from these project files.
+The current project files constitute the complete template. There is no separate packaging script to run and no source or dependency archive to upload in advance. Platform deployment automatically delivers custom business source from these project files.
 
 Official ComfyUI source, frontend installation packages, PyTorch and virtual environments are not included in this project; ECS downloads them from pinned configuration. Automatic source delivery also excludes local parameters, state, plans, secrets, media and regression tests. Enter deployment inputs on the platform as described in section 4.2.1. After changing source, import the complete updated project and generate a new execution plan.
 
@@ -195,11 +196,11 @@ Select the template and click **Create Stack**. Enter the stack information and 
 
 Parameter details are in section 4.2.1. Required inputs are `zone_id`, `image_id`, `instance_type`, `bucket_name`, `ssh_allowed_cidrs`, `ark_api_key`, and the ECS credentials for the selected login mode.
 
-For key-pair mode, provide an existing `ssh_key_pair_name` and leave `ecs_password` empty. For password mode, leave the key-pair name empty and supply a real `ecs_password` as a sensitive parameter. The current local parameter file uses password mode. Public ports 80/443 open only when `web_allowed_cidrs` is configured; an empty set retains SSH tunnel access.
+For key-pair mode, provide an existing `ssh_key_pair_name` and leave `ecs_password` empty. For password mode, leave the key-pair name empty and supply a real `ecs_password` as a sensitive parameter. The parameter example included in the project uses password mode. Public ports 80/443 open only when `web_allowed_cidrs` is configured; an empty set retains SSH tunnel access.
 
 For an independent new environment, use unused values for `name_prefix` and `bucket_name` to avoid collisions with existing IAM roles, policies or globally unique bucket names. Review chunk counts, bucket names, allowed CIDRs, role permissions and any deletions or replacements before deployment.
 
-One Apply creates resources and delivers source; ECS then installs the application automatically. Terraform or stack success does not wait for application `ready` and does not establish that login or video generation works. If the page has not started yet, inspect installation status using section 4.1.4 before repeating Apply.
+One Apply creates resources and delivers source; ECS then installs the application automatically. A successful Terraform run means that resources have been created; it does not establish application readiness or verify login or video generation. If the page has not started yet, inspect installation status using section 4.1.4 before repeating Apply.
 
 #### 4.1.4 Verify the Deployment
 
@@ -213,11 +214,11 @@ Confirm that the deployment status is successful on the stack details page, then
 | `application_access` | Public URLs, SSH tunnel, configuration/certificate paths, status and log commands |
 | `source_delivery` | Delivery mode, bucket, object key, source SHA256, public manifest URL, and chunk count |
 
-None of these outputs is declared sensitive. They do not return the login password or API key, but include resource locations and runtime settings. The current example creates 16 cloud resources and 17 Terraform-managed objects; section 4.2.3 explains counts after source or parameter changes. Public URLs are `null` when `web_allowed_cidrs` is empty.
+These outputs do not contain the login password or API key, but they include resource locations and runtime settings. Do not share them publicly. The current example creates 16 cloud resources and 17 Terraform-managed objects; section 4.2.3 explains counts after source or parameter changes. Public URLs are `null` when `web_allowed_cidrs` is empty.
 
 From the stack's Resources tab, open ECS details and check its VPC, subnet, security group and instance role associations. In TOS, confirm the media bucket is private with versioning matching `bucket_versioning`, and the source bucket is private with only custom source chunks and the manifest public-read. If `cors_allowed_origins` is configured, also check the corresponding CORS rules.
 
-First-boot installation proceeds as follows: fetch custom source from TOS → install backend dependencies → fetch ComfyUI source from GitHub → install CPU PyTorch, the official frontend and other dependencies → configure the database and services → start and check the services. Downloads and installation run inside ECS. Duration depends on package sources, networking and instance configuration; a fixed number of minutes is not a completion criterion.
+First-boot installation proceeds as follows: fetch custom source from TOS → install backend dependencies → fetch ComfyUI source from GitHub → install CPU PyTorch, the official frontend and other dependencies → configure the database and services → start and check the services. Downloads and installation run inside ECS. Duration depends on package sources, networking and instance configuration. Use the actual status to judge progress rather than a fixed waiting period.
 
 Locate ECS using `infrastructure.instance_id`. Run these commands in its console terminal or an SSH session:
 
@@ -271,11 +272,16 @@ If public access cannot connect, check application readiness, whether the curren
 
 Official canvas steps and expected results:
 
-1. Click **Templates** in the sidebar, select `ai_animation` under Extensions, and open `ark-text-to-video`. This creates a workflow tab containing the connected **火山方舟视频生成** and **Save Video (SaveVideo)** nodes. Alternatively, drag `workflows/ark-text-to-video.json` from the project onto the canvas, or add both nodes manually and connect their `VIDEO` ports.
+1. Click **Templates** in the sidebar, select `ai_animation` under Extensions, and open `ark-text-to-video`. This creates a workflow tab containing the connected **Volcengine Ark Video Generation** and **Save Video (SaveVideo)** nodes. Alternatively, drag `workflows/ark-text-to-video.json` from the project onto the canvas, or add both nodes manually and connect their `VIDEO` ports.
+
 2. Enter a prompt in the generation node. The example uses 4 seconds, 16:9 and 720p. Select an enabled model from the node's current list, and configure `generate_audio` and `watermark` as required. Do not enter a key in the node; the sidebar model library does not require local model weights for this workflow.
+
 3. Keep `SaveVideo` set to `mp4` and `auto`. **Save** in the workflow actions menu stores only the nodes, links and parameters; the official **Run** button at the top right submits the video task. Keep the top batch count at `1` and the generation node's `generation_id` at `1`. The Comfy account login entry is unrelated to this workflow; no official account or credits are required.
+
 4. Click **Run** once and wait for generation, download and private TOS archiving; no execution button is needed on another page. This uses the customer's Ark key and incurs model usage charges. On completion, both nodes should show video previews. `SaveVideo` writes the MP4 to `/opt/ai-animation/work/comfyui/output/` on ECS, and the preview menu provides a download action.
-5. Run again with the same `generation_id` and other parameters to verify reuse of the business task and Ark Task ID. To generate another video with identical parameters, change `generation_id` to `2`. The top batch count and generation batch are different settings.
+
+5. Run again with the same `generation_id` and other parameters. The expected result is reuse of the same business task and Ark Task ID. To generate another video with identical parameters, change `generation_id` to `2`. The top batch count and generation batch are different settings.
+
 6. After interruption or a disconnected page, run again with the original parameters and generation batch to query the existing task. If a node fails, inspect its task ID and error first. For uncertain submission, check the original Task ID in Ark before recovering through section 4.3 to avoid duplicate submission.
 
 These are operating steps and expected results; model permissions, video content, archiving and downloading still require verification in the target account. In TOS, confirm that the media bucket's `media/` objects are private, and use section 4.4 to check data retention boundaries. Section 4.2.5 covers full environment cleanup.
@@ -333,7 +339,7 @@ Replace placeholders with real values and protect terminal history. Values assig
 
 Review the local `terraform.tfvars` and update values for the target account. When the complete project does not include this file, create it using the parameters below. Defaults come from `variables.tf`. The current example uses `password` login, a 100 GiB `ESSD_FlexPL` system disk, a 10 Mbps EIP, `Enabled` bucket versioning, an empty CORS set, and 1 SSH source CIDR and 1 Web source CIDR. Both example source sets use `0.0.0.0/0` (the entire public IPv4 Internet); narrow them to actual administrator and user sources before deployment. These example settings do not change the variable-definition defaults:
 
-| Parameter | Default / input | Description |
+| Parameter | Default / Input Source | Description |
 | --- | --- | --- |
 | `region` / `zone_id` | `cn-beijing` / required | Region and an availability zone with capacity |
 | `project_name` / `name_prefix` | `default` / `ai-animation` | Cloud project and resource name prefix |
@@ -356,13 +362,13 @@ Review the local `terraform.tfvars` and update values for the target account. Wh
 | `cors_allowed_origins` | `[]` | Exact browser origins; empty skips CORS creation |
 | `ark_api_key` | Required, sensitive | Ark API key written directly to the backend secret file and stored in Terraform state |
 | `ark_base_url` | `https://ark.cn-beijing.volces.com/api/v3` | Ark API base URL |
-| `script_model_id` | `doubao-seed-2-1-pro-260628` | Default for legacy project APIs; unused by the text-to-video node |
-| `video_model_id` | `doubao-seedance-2-0-260128` | Default for legacy project APIs; select the new node model on the canvas |
+| `script_model_id` | `doubao-seed-2-1-pro-260628` | Default script model for legacy project APIs; unused by the text-to-video node |
+| `video_model_id` | `doubao-seedance-2-0-260128` | Default video model for legacy project APIs; select the new node's model on the canvas |
 | `media_url_ttl_seconds` | `900` | Signed media URL lifetime, an integer from 60–3600 seconds; shortened when the instance-role credential expires sooner |
 
 Login credentials are mutually exclusive: provide only the key-pair name in key-pair mode and only the password in password mode. Supply `ark_api_key` through a sensitive platform input or `TF_VAR_ark_api_key`. Automatically loaded `terraform.tfvars` values take precedence over `TF_VAR_*`; do not assign a variable in the parameter file when injecting the same variable through the environment.
 
-CPU ECS runs the official ComfyUI interface and custom nodes, while Ark performs model computation. The template always invokes Ark with the customer Ark key. No additional remote ComfyUI URL, workflow contract or authentication key is required. ECS automatically installs and starts the local official ComfyUI service.
+ECS runs the official ComfyUI interface and custom nodes, while Ark performs model computation. The template invokes Ark using only the customer's Ark key. No additional remote ComfyUI URL, workflow protocol or authentication key is required; ECS automatically installs and starts ComfyUI.
 
 #### 4.2.2 Scenario-based Deployment Examples
 
@@ -397,7 +403,7 @@ terraform apply deploy.tfplan
 
 One apply creates infrastructure, automatically uploads current custom source and triggers ECS installation. ECS then downloads pinned official ComfyUI and runtime dependencies. There is no delivery-mode selection or dependency bundle to prepare. Wait for application status `ready` before public login and example workflow execution.
 
-For existing environments, review deletions and replacements before applying. Changing ECS user data does not automatically replay cloud-init. Verify a new release with a new resource stack and a cache-free new ECS.
+For existing environments, review deletions and replacements before applying. Changing ECS user data does not automatically replay cloud-init on an existing host. Verify deployment of a new release using a new resource stack and a fresh ECS instance.
 
 Scenario two: use an existing ECS key pair and access the workspace only through an SSH tunnel. Replace the following settings in the base parameter file, and connect using the private key corresponding to that key pair:
 
@@ -461,7 +467,7 @@ For runtime failures, inspect `deployment-status.json` and the service logs from
 
 This project supports Terraform destruction of managed resources, but nonempty TOS buckets must be emptied manually first. Before destruction, back up PostgreSQL, media, secrets, and runtime configuration. Confirm that the directory, workspace, parameters, and credentials belong to the target environment.
 
-If ECS deletion protection is enabled, disable and apply the change first. To retain the system disk, set `delete_system_disk_with_instance = false`, review and apply the change, and confirm that it does not replace ECS. A destroy operation does not first apply a pending disk-policy change.
+If ECS deletion protection is enabled, disable and apply the change first. To retain the system disk, set `delete_system_disk_with_instance` to `false`, review and apply the change, and confirm that it does not replace ECS. A destroy operation does not first apply a pending disk-policy change.
 
 After confirming that required data is backed up outside this stack, use the TOS console to remove all objects, historical versions, and delete markers from the media bucket. Check the automatic source bucket for remaining objects as well. Deleting only current versions does not empty a versioned bucket. Then review and execute destruction:
 
@@ -484,21 +490,21 @@ The media bucket in the current `main.tf` has `prevent_destroy = false`, and the
 
 ### 4.3 Task Reuse and Recovery
 
-- The same batch and parameters create one business video task. After persisting the Ark Task ID, Worker polls that task. Download and TOS upload retries reuse the existing result.
+- The same generation batch and parameters create only one business video task. After persisting the Ark Task ID, Worker continues polling that task. Failed downloads or TOS uploads retry using the original task result without regenerating the video.
 - Authenticated `GET /studio-api/ark/videos/<job_id>` returns state, the original Task ID, errors and the asset ID.
 - For uncertain submission, check Ark and supply `external_id` to `POST /studio-api/jobs/<job_id>/recover`. Regenerating a definitively terminated model task requires explicit `acknowledge_duplicate_cost=true` and may incur another model charge.
-- For a failed upload, `POST /studio-api/assets/<asset_id>/backup/retry` retries archiving only. Mutations require the login session and `x-csrf-token`, using the existing JSON contracts.
-- Existing project, script, storyboard and composition APIs and node identifiers remain available for old workflows and historical data. The default interface opens the official canvas.
+- For a failed TOS upload, `POST /studio-api/assets/<asset_id>/backup/retry` retries archiving only. Requests that modify data require the login session and `x-csrf-token`, with the JSON body following the existing API format.
+- Legacy project, script, storyboard and composition APIs and nodes remain available for compatibility with existing workflows and historical data. The default interface opens the official canvas.
 
 ### 4.4 Asset Backup and Operational Checks
 
-Cloud deployment enables `storage.auto_upload=true` by default, and private TOS is the final media store. The bucket comes from `bucket_name`. Uploads cover archived current and historical shot videos, final films, model ending frames, extracted reference frames, uploaded images, and frame-selection preview videos.
+Cloud deployment enables `storage.auto_upload=true` by default. The target bucket comes from `bucket_name` and is not hardcoded. Backups cover current and historical storyboard videos, final videos, model ending frames, extracted reference frames, uploaded images and frame-selection preview videos.
 
-Objects use the `media/<project_id>/<asset_id>/` prefix, private ACL, AES256 encryption and SDK CRC checks. After upload, a HEAD request verifies the size and SHA256 metadata. The upload queue is independent of model tasks: failures retry only upload and do not regenerate video. Retry intervals grow from 30 seconds to at most 30 minutes, and interrupted Worker leases can be reclaimed after expiry. The node returns video only after archiving succeeds; upload recovery reuses the original asset.
+Objects use the `media/<project_id>/<asset_id>/` prefix, private ACL, AES256 encryption and SDK CRC checks. After upload, a HEAD request verifies the size and SHA256 metadata. The backup queue is independent of model tasks: failures do not regenerate video. Retry intervals grow from 30 seconds to at most 30 minutes. After a Worker interruption, tasks automatically recover when their locks expire. The node returns video only after archiving succeeds; failed archiving retries the upload using the original asset.
 
 ECS obtains temporary credentials through its instance role and prefers the TOS internal HTTPS endpoint. For real uploads from a development machine, configure the bucket, region, endpoint and backend credential files `TOS_ACCESS_KEY_FILE` and `TOS_SECRET_KEY_FILE`; temporary credentials additionally require `TOS_SESSION_TOKEN_FILE`.
 
-The new node waits for TOS archiving, downloads video through the authenticated backend into the ComfyUI temporary directory, and uses standard ComfyUI preview and save nodes. Existing media access APIs still issue signed TOS URLs with a default lifetime of 900 seconds, configurable through `media_url_ttl_seconds`.
+The node waits for TOS archiving to complete, then downloads the video through an authenticated API into the ComfyUI temporary directory for the official preview and save nodes. Existing media access APIs still issue short-lived signed TOS URLs with a default lifetime of 900 seconds, configurable through `media_url_ttl_seconds`.
 
 When frame extraction or assembly needs a local file, the backend can download a missing cache file from TOS. This requires the database asset record and TOS object to remain available. TOS persists media only; it does not back up the project database, secrets, or runtime configuration. ECS data locations:
 
@@ -521,9 +527,9 @@ curl --fail --silent --show-error --max-time 15 http://127.0.0.1:8080/studio-api
 sudo journalctl -u ai-animation-worker.service -n 100 --no-pager
 ```
 
-Confirm active services and `{"status":"ok"}` from the health endpoint, then inspect node results, backup status in task queries and Worker logs. PostgreSQL advisory locks serialize database migrations. The current schema version is `6`, including task error details and the independent media backup queue.
+Confirm that the services are `active` and the health endpoint returns `{"status":"ok"}`, then inspect node results, backup status in task queries and Worker logs. PostgreSQL advisory locks serialize database migrations. The current schema version is `6`, including task error details and the independent media backup queue.
 
-The installer generates the studio login password randomly and stores it in the ECS `owner_password` file, not in the database. “Local machine” in the interface means the ECS server. The API loads the password through systemd credentials, and a normal restart does not regenerate it. To change the password on ECS:
+The installer generates the studio login password randomly and stores it in the ECS `owner_password` file, not in the database. All references to the local machine in the paths above mean the ECS instance. The API loads the password through systemd credentials, and a normal restart does not regenerate it. To change the password on ECS:
 
 ```bash
 sudoedit /opt/ai-animation/secrets/owner_password
@@ -542,6 +548,4 @@ Verify model permissions, application health, and data recovery in the target en
 - Customers use their own Ark keys from the official canvas. Standard `VIDEO` connects to previews and `SaveVideo`, with model usage billed to the customer's account.
 - PostgreSQL retains task state, Worker reuses existing Ark Task IDs, and media is archived in private TOS.
 
-The canvas entry point supports text-to-video through the customer's Ark key. Official Partner Nodes remain disabled. Model availability and generated content depend on the customer's Ark account and service. The official ComfyUI save node writes MP4 files on ECS, while business media is archived in private TOS.
-
-The application and database run on one ECS instance. Manage media archives, database records, workflows and server credentials according to their retention requirements. Destruction steps are in section 4.2.5.
+The current canvas entry point supports text-to-video generation. The node uses the customer's Ark key, and official Partner Nodes remain disabled. Model permissions and generated content depend on the target Ark account and service. The standard ComfyUI save node writes MP4 files locally on ECS, while the original business media is also archived in private TOS.
